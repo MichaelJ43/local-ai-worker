@@ -38,7 +38,19 @@
     "guardrailOverrides": {},
     "contextPath": { "type": ["string", "null"] },
     "longTermVolume": { "type": ["string", "null"] },
-    "dockerImage": { "type": ["string", "null"] }
+    "dockerImage": { "type": ["string", "null"] },
+    "envFromSecrets": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["envVar", "secretKey"],
+        "properties": {
+          "envVar": { "type": "string", "minLength": 1 },
+          "secretKey": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    }
   },
   "additionalProperties": false
 }

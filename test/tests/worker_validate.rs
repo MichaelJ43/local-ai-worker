@@ -16,6 +16,7 @@ fn git_allowlist_enforced_empty_fails() {
         context_path: None,
         long_term_volume: None,
         docker_image: None,
+        env_from_secrets: vec![],
     };
     assert!(w.validate().is_err());
 }

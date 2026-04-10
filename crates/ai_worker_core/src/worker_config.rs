@@ -29,6 +29,16 @@ pub struct WorkerDefinition {
     /// Agent container image (default `local-ai-worker-agent:latest` if empty).
     #[serde(default)]
     pub docker_image: Option<String>,
+    /// Map stored secret keys (Keychain) to container env vars, e.g. `GITHUB_TOKEN` ← `github_token`.
+    #[serde(default)]
+    pub env_from_secrets: Vec<EnvSecretBinding>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct EnvSecretBinding {
+    pub env_var: String,
+    pub secret_key: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -57,6 +67,12 @@ impl WorkerDefinition {
         if self.maintenance_domain.is_empty() {
             return Err("maintenanceDomain required".into());
         }
+        for b in &self.env_from_secrets {
+            if b.env_var.trim().is_empty() || b.secret_key.trim().is_empty() {
+                return Err("envFromSecrets: envVar and secretKey required".into());
+            }
+        }
+
         if self.maintenance_domain == "git" {
             if let Some(ov) = &self.guardrail_overrides {
                 if let Some(scope) = ov.get("scope") {
