@@ -19,15 +19,9 @@ pub fn materialize_compose_files(dir: &Path) -> Result<(), String> {
     Ok(())
 }
 
-/// True if `nvidia-smi` runs (rough signal that an NVIDIA driver stack is present).
+/// True if `nvidia-smi` lists GPUs (shared heuristic with [`ai_worker_core::hardware`]).
 pub fn nvidia_smi_available() -> bool {
-    Command::new("nvidia-smi")
-        .args(["-L"])
-        .stdout(std::process::Stdio::null())
-        .stderr(std::process::Stdio::null())
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    ai_worker_core::hardware::nvidia_smi_available()
 }
 
 fn docker_compose_up_cmd(dir: &Path, use_gpu: bool) -> Result<Command, String> {
