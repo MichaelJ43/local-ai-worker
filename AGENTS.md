@@ -1,0 +1,180 @@
+# AGENTS.md — AI / agent context for this repository
+
+This file is the **primary onboarding document** for coding agents (and humans) starting a new chat or task. It summarizes layout, architecture, boundaries, and where to change what. For user-facing usage, see **`README.md`** and **`docs/USER_GUIDE.md`**. Original product intent lives in **`project_prompt.txt`** (may not match every detail of the current codebase).
+
+---
+
+## What this project is
+
+**Local AI Worker** is a **Tauri 2** desktop app: a **Vite** frontend (`src/`) talks to a **Rust** backend (`src-tauri/`) that persists workers, manages **secrets** (OS keychain + index file), drives **Docker** (Ollama compose + per-worker agent containers), and embeds shared logic in **`ai_worker_core`**. Agent runtimes use a **bundled worker image** (`docker/`) with an **agent loop** that reads `agent-config.json`, schedules **cadence** vs **one-shot** tasks, calls **Ollama**, and updates **context JSON**.
+
+---
+
+## Tech stack
+
+| Layer | Stack |
+|--------|--------|
+| Desktop shell | Tauri 2, Rust stable |
+| UI | Vanilla HTML/CSS/JS, Vite 5, `@tauri-apps/api` v2 |
+| Shared logic | `ai_worker_core` crate (rules, context, audit, Ollama client, hardware, guard exec, worker config) |
+| Worker container | Docker image built from `docker/` (bash agent loop, git/gh guard wrappers) |
+| Persistence (app) | `workers.json`, `secret_keys.json`, `pending_restore_prompt.json`, `audit.sqlite3`, per-worker dirs under app data |
+| CI | GitHub Actions: path-filtered frontend build, Playwright e2e, Rust test + clippy (multi-OS) |
+
+---
+
+## Top-level layout
+
+```
+.github/               # CI (ci.yml, release.yml, version-bump.yml), PR template
+crates/
+  ai_worker_core/      # Library: rules, context, audit, docker helpers, worker_config, worker-guard binary
+docker/                # Dockerfile.worker, agent-loop.sh, entrypoints, wrappers
+docs/                  # USER_GUIDE, COMPOSE_WORKERS, architecture, rules/rules-tree.json, schemas/
+scripts/               # bump-version.mjs, inject-updater-endpoint.mjs
+src/                   # Vite app: index.html, main.js, styles.css, updater.js → dist/
+src-tauri/             # Tauri crate: lib.rs, compose.rs, secrets.rs, worker_docker.rs, tauri.conf.json, capabilities/, resources/compose/
+test/                  # Rust integration tests (ai_worker_integration); playwright tests under test/playwright/
+Cargo.toml             # Workspace root (version in [workspace.package])
+package.json           # npm scripts; version should match workspace
+playwright.config.js   # e2e: build + preview on port 4173
+vite.config.js
+docker-compose.yml     # Optional root compose (Ollama); app also bundles compose under src-tauri/resources/compose/
+```
+
+Generated / not primary sources of truth for agents: `src/dist/`, `target/`, `node_modules/`, `src-tauri/gen/` (Tauri-generated schemas; regenerate via Tauri CLI when needed).
+
+---
+
+## Architecture boundaries (dependency direction)
+
+1. **`crates/ai_worker_core`** — **No Tauri**. Pure Rust. Used by `src-tauri` and `test`. Embeds `docs/rules/rules-tree.json` via `include_str!`. Adding a domain means editing that JSON and any Rust validation in `worker_config` / `rules`.
+2. **`src-tauri`** — **Tauri commands**, filesystem, keyring, Docker CLI. Depends on `ai_worker_core`. **`src-tauri/src/lib.rs`** registers all `#[tauri::command]` handlers and `RunEvent::Exit` (session snapshot). **`secrets.rs`** = KV secret names + keychain entries. **`worker_docker.rs`** = container lifecycle + `env_from_secrets` → `-e` flags.
+3. **`src/` (frontend)** — **No direct filesystem**. Uses `invoke("commandName", { ... })` only. CamelCase in JSON matches serde `rename_all = "camelCase"` on Rust structs.
+4. **`docker/`** — Agent image and loop; must stay consistent with **`WorkerDefinition`** / `agent-config.json` shape materialized in `worker_docker.rs` (`materialize_worker_runtime`).
+
+**Rule of thumb:** schema changes to workers require **`WorkerDefinition`** in Rust, **`docs/schemas/worker-definition.schema.json`**, frontend **`workerTemplate` / renderers**, and any **`test/`** struct literals.
+
+---
+
+## App data directory (runtime)
+
+Resolved in Rust as: `dirs::data_local_dir()/local-ai-worker` (see `app_dir()` in `src-tauri/src/lib.rs`).
+
+Typical contents:
+
+| File / dir | Role |
+|------------|------|
+| `workers.json` | Serialized `Vec<WorkerDefinition>` |
+| `secret_keys.json` | Index of secret **names** (values in OS keychain) |
+| `pending_restore_prompt.json` | Last-exit enabled snapshot for “Welcome back” UI |
+| `audit.sqlite3` | GitHub mutation audit log |
+| `workers/<id>/` | `context.json`, materialized `guardrails.effective.json`, `system-prompt.txt`, `agent-config.json` |
+
+---
+
+## Core concepts
+
+### Worker definition (`WorkerDefinition`)
+
+- **`maintenanceDomain`** — Key into `rules-tree.json` `domains` (e.g. `git`). Drives guardrails + prompt section.
+- **`tasks`** — Each has `schedule`: **`oneShot`** or **`cadence`** with **`intervalSeconds`** (see `docker/agent-loop.sh` for due logic).
+- **`envFromSecrets`** — Maps **secret key** (KV store name) → **container env var**. If `GITHUB_TOKEN` not mapped, legacy/`github_token` secret still injected when present.
+- **`enabled`** — UI/scheduling intent; reopen prompt uses last saved enabled flags on app exit.
+
+### Secrets
+
+- **KV store:** `secret_keys_list` / `secret_set` / `secret_delete`; values in keychain as `secret:<name>`; legacy GitHub entry migrated to `github_token` when listing.
+- **GitHub helpers:** `set_github_token` / `delete_github_token` still exist; forward to KV + clear legacy.
+
+### Rules
+
+- Source: **`docs/rules/rules-tree.json`**. Exposed to UI via **`rules_domains_list`** for domain picker + help copy.
+
+### Docker
+
+- **Compose:** `src-tauri/src/compose.rs` + bundled YAML in **`src-tauri/resources/compose/`** copied to app data before `docker compose`.
+- **Worker containers:** `worker_docker.rs` — `prepare_worker_storage`, `worker_start`, logs, etc. Image default `local-ai-worker-agent:latest` unless worker overrides `dockerImage`.
+
+---
+
+## Frontend (`src/`)
+
+- **`main.js`** — Navigation views, workers CRUD UI, secrets table, compose actions, modals (domain/tasks help, session restore), `invoke` wiring.
+- **`index.html`** — Shell: sidebar nav (Overview, Ollama stack, Workers, Secrets, Diagnostics).
+- **`styles.css`** — Layout and component styles.
+- **`updater.js`** — Update check scheduler + Tauri updater plugin.
+
+**E2E:** `test/playwright/smoke.spec.js` — assumes nav shell (e.g. Workers is a **button**, Workers **h2** is in a tab). Run `npm run test:e2e` (starts preview on 4173).
+
+---
+
+## Tauri command surface (reference)
+
+Registered in **`src-tauri/src/lib.rs`** `generate_handler!`:
+
+- Workers: `get_workers`, `save_workers`, `worker_storage_prepare`, `worker_docker_start` / `stop` / `recreate` / `status` / `logs`
+- Secrets: `secret_keys_list`, `secret_set`, `secret_delete`, `github_token_configured`, `set_github_token`, `delete_github_token`
+- Environment: `docker_status`, `hardware_profile`, `ollama_list_models`, `ollama_stack_gpu_hint`, `ollama_stack_up` / `down` / `status`
+- Rules / UX: `assemble_prompt_preview`, `rules_domains_list`, `session_peek_pending_restore`, `session_resolve_restore`
+- Other: `audit_record_github`, `audit_recent_github`, `app_log_lines`, `open_external_url`
+
+Adding a command: implement in `lib.rs` (or module), register in `generate_handler!`, call from frontend with matching argument names (camelCase for serde).
+
+---
+
+## Testing
+
+| Command | Scope |
+|---------|--------|
+| `cargo test --workspace` | Rust unit + integration (`test/tests/`, `ai_worker_core` tests) |
+| `cargo clippy --workspace -- -D warnings` | Lint (CI uses this) |
+| `npm run build` | Vite production build |
+| `npm run test:e2e` | Playwright against built preview |
+
+CI path filters (`.github/workflows/ci.yml`): changes under `src/`, `playwright`, `src-tauri`, `crates`, etc., gate relevant jobs.
+
+---
+
+## Versioning and release
+
+- **Bump:** `node scripts/bump-version.mjs patch|minor|major` updates root `Cargo.toml` `[workspace.package].version`, `package.json`, `crates/ai_worker_core/Cargo.toml`, `tauri.conf.json`, lockfiles.
+- **Workflows:** `version-bump.yml` (merge to main), `release.yml` (tauri-action, installers, updater artifacts). See **README** for secrets (`RELEASE_PUSH_TOKEN`, `TAURI_SIGNING_PRIVATE_KEY`).
+
+---
+
+## Security / secrets (for agents)
+
+- **Never commit** private signing keys (e.g. `src-tauri/.updater-signing.key`), tokens, or real `workers.json` from user machines.
+- **`.gitignore`** already excludes common key paths; verify before `git add -A`.
+
+---
+
+## When you change X, also check Y
+
+| Change | Also update |
+|--------|-------------|
+| `WorkerDefinition` fields | `docs/schemas/worker-definition.schema.json`, `main.js` (`workerTemplate`, render), `test/tests/*.rs` literals, `worker_docker` / agent-config materialization if needed |
+| Rules domains / guardrails | `docs/rules/rules-tree.json`, `rules_domains_list` consumers, USER_GUIDE if user-visible |
+| Agent task schedule semantics | `docker/agent-loop.sh`, `worker_config` / schema, UI task editors |
+| New Tauri command | `lib.rs` handler list, frontend `invoke`, optionally `capabilities` if permissions change |
+| UI navigation / visible headings | `test/playwright/smoke.spec.js` |
+| Session / app data files | `AGENTS.md` this table, `USER_GUIDE` if user-facing |
+
+---
+
+## Quick commands
+
+```bash
+npm install
+npm run tauri dev
+npm run build && npm run test:e2e
+cargo test --workspace
+cargo clippy -p ai_worker_manager --all-targets -- -D warnings
+```
+
+---
+
+## Maintainer note
+
+If the architecture changes significantly, **update this file** in the same PR so future agent sessions stay aligned.

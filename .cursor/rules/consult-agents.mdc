@@ -1,0 +1,14 @@
+---
+description: Consult root AGENTS.md for repo layout and boundaries on every change
+alwaysApply: true
+---
+
+# Consult AGENTS.md
+
+For **every** task that reads, edits, or adds code or config in this repository:
+
+1. **Open and use** the root **`AGENTS.md`** as the source of truth for directory layout, layer boundaries (core vs Tauri vs frontend vs Docker), worker/secrets model, Tauri commands, testing, and “when you change X, also update Y” checklists.
+2. **Before finishing**, verify your edits do not violate those boundaries (e.g. no Tauri inside `ai_worker_core`; worker schema changes propagate to schema JSON + tests + UI).
+3. If you introduce a **material** architectural or workflow change, **update `AGENTS.md`** in the same change so the next session stays accurate.
+
+If **`AGENTS.md`** is missing, use **`README.md`** and consider restoring `AGENTS.md`.
