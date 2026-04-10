@@ -1,0 +1,112 @@
+name: Version bump
+
+on:
+  pull_request:
+    types: [closed]
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      bump:
+        description: "Semver segment to increase"
+        type: choice
+        required: true
+        default: minor
+        options:
+          - patch
+          - minor
+          - major
+
+concurrency:
+  group: version-bump
+  cancel-in-progress: true
+
+jobs:
+  bump:
+    if: |
+      (github.event_name == 'workflow_dispatch') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.merged == true)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+      actions: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - name: Use PAT for git push
+        env:
+          PAT: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          PAT_ALT: ${{ secrets.GH_PAT }}
+        run: |
+          TOKEN="${PAT:-$PAT_ALT}"
+          if [ -z "$TOKEN" ]; then
+            echo "::error::Add repository secret RELEASE_PUSH_TOKEN (or GH_PAT): PAT with repo Contents write. See README (Versioning)."
+            exit 1
+          fi
+          git remote set-url origin "https://x-access-token:${TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+          cache: npm
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - run: npm ci
+
+      - name: Choose bump kind
+        id: kind
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_BUMP: ${{ github.event.inputs.bump }}
+          PR_TITLE: ${{ github.event_name == 'pull_request' && github.event.pull_request.title || '' }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ]; then
+            echo "bump=$INPUT_BUMP" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          if printf '%s' "$PR_TITLE" | grep -qiE '\+\(semver:major\)'; then
+            echo "bump=major" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR title matched +(semver:major)"
+          elif printf '%s' "$PR_TITLE" | grep -qiE '\+\(semver:minor\)'; then
+            echo "bump=minor" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR title matched +(semver:minor)"
+          elif printf '%s' "$PR_TITLE" | grep -qiE '\+\(semver:patch\)'; then
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+            echo "::notice::PR title matched +(semver:patch)"
+          else
+            echo "bump=patch" >> "$GITHUB_OUTPUT"
+            echo "::notice::No +(semver:…) in PR title; defaulting to patch"
+          fi
+
+      - name: Bump version
+        run: node scripts/bump-version.mjs "${{ steps.kind.outputs.bump }}"
+
+      - name: Commit and tag
+        env:
+          PAT: ${{ secrets.RELEASE_PUSH_TOKEN }}
+          PAT_ALT: ${{ secrets.GH_PAT }}
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add package.json package-lock.json Cargo.toml Cargo.lock \
+            src-tauri/tauri.conf.json crates/ai_worker_core/Cargo.toml
+          if git diff --staged --quiet; then
+            echo "No version change; exiting."
+            exit 0
+          fi
+          VERSION=$(node -p "require('./package.json').version")
+          git commit -m "chore: release v${VERSION}"
+          git push origin main
+          git tag "v${VERSION}"
+          git push origin "refs/tags/v${VERSION}"
+          echo "Dispatching Release workflow for v${VERSION}..."
+          DISPATCH_TOKEN="${PAT:-$PAT_ALT}"
+          if [ -z "$DISPATCH_TOKEN" ]; then
+            echo "::error::Missing RELEASE_PUSH_TOKEN / GH_PAT for workflow dispatch."
+            exit 1
+          fi
+          env -u GITHUB_TOKEN GH_TOKEN="$DISPATCH_TOKEN" gh workflow run release.yml \
+            --ref main -f tag="v${VERSION}" -R "${GITHUB_REPOSITORY}"

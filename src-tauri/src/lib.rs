@@ -321,11 +321,19 @@ fn app_log_lines(log: tauri::State<AppLogBuffer>) -> Vec<String> {
     log.0.lock().map(|g| g.clone()).unwrap_or_default()
 }
 
+/// Open a URL in the system browser (e.g. GitHub releases).
+#[tauri::command]
+fn open_external_url(url: String) -> Result<(), String> {
+    open::that(url).map_err(|e| e.to_string())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
         .manage(AppLogBuffer::default())
         .plugin(tauri_plugin_shell::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             get_workers,
             save_workers,
@@ -349,6 +357,7 @@ pub fn run() {
             audit_record_github,
             audit_recent_github,
             app_log_lines,
+            open_external_url,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

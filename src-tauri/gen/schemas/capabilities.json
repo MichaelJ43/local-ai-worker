@@ -1,1 +1,1 @@
-{"default":{"identifier":"default","description":"Default window capability","local":true,"windows":["main"],"permissions":["core:default","shell:default"]}}
+{"default":{"identifier":"default","description":"Default window capability","local":true,"windows":["main"],"permissions":["core:default","shell:default","updater:default","process:default"]}}

@@ -11,3 +11,7 @@ app-icon.png
 /playwright-report/
 /test-results/
 /playwright/.cache/
+
+# Tauri updater signing — never commit private keys. Public key is in tauri.conf.json only.
+src-tauri/*.key
+src-tauri/*.key.pub
