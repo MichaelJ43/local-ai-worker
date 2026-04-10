@@ -1,6 +1,7 @@
 //! Tauri backend: workers persistence, secrets, Docker/Ollama helpers.
 
 mod compose;
+mod secrets;
 mod worker_docker;
 
 use ai_worker_core::{
@@ -10,13 +11,10 @@ use ai_worker_core::{
     rules::{self, RulesTree},
     worker_config::WorkerDefinition,
 };
-use keyring::Entry;
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
+use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
-
-const KEYRING_SERVICE: &str = "local-ai-worker";
-const GITHUB_TOKEN_USER: &str = "github_api_token";
 
 fn app_dir() -> PathBuf {
     dirs::data_local_dir()
@@ -30,6 +28,37 @@ fn workers_path() -> PathBuf {
 
 fn audit_db_path() -> PathBuf {
     app_dir().join("audit.sqlite3")
+}
+
+fn pending_restore_path() -> PathBuf {
+    app_dir().join("pending_restore_prompt.json")
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct PendingRestoreFile {
+    should_prompt: bool,
+    enabled_by_worker_id: HashMap<String, bool>,
+}
+
+fn write_pending_restore_on_app_exit() {
+    let _ = (|| -> Result<(), String> {
+        let workers = read_workers()?;
+        let should_prompt = workers.iter().any(|w| w.enabled);
+        let enabled_by_worker_id: HashMap<_, _> =
+            workers.iter().map(|w| (w.id.clone(), w.enabled)).collect();
+        let doc = PendingRestoreFile {
+            should_prompt,
+            enabled_by_worker_id,
+        };
+        std::fs::create_dir_all(app_dir()).map_err(|e| e.to_string())?;
+        std::fs::write(
+            pending_restore_path(),
+            serde_json::to_string_pretty(&doc).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        Ok(())
+    })();
 }
 
 fn read_workers() -> Result<Vec<WorkerDefinition>, String> {
@@ -109,22 +138,36 @@ fn hardware_profile() -> ai_worker_core::hardware::HardwareProfile {
 
 #[tauri::command]
 fn github_token_configured() -> bool {
-    Entry::new(KEYRING_SERVICE, GITHUB_TOKEN_USER)
-        .and_then(|e| e.get_password())
-        .map(|s| !s.is_empty())
-        .unwrap_or(false)
+    secrets::any_github_like_configured(&app_dir()).unwrap_or(false)
 }
 
 #[tauri::command]
 fn set_github_token(token: String) -> Result<(), String> {
-    let entry = Entry::new(KEYRING_SERVICE, GITHUB_TOKEN_USER).map_err(|e| e.to_string())?;
-    entry.set_password(&token).map_err(|e| e.to_string())
+    secrets::set_secret(&app_dir(), "github_token".into(), token)?;
+    secrets::delete_legacy_github_entry();
+    Ok(())
 }
 
 #[tauri::command]
 fn delete_github_token() -> Result<(), String> {
-    let entry = Entry::new(KEYRING_SERVICE, GITHUB_TOKEN_USER).map_err(|e| e.to_string())?;
-    entry.delete_credential().map_err(|e| e.to_string())
+    let _ = secrets::delete_secret(&app_dir(), "github_token");
+    secrets::delete_legacy_github_entry();
+    Ok(())
+}
+
+#[tauri::command]
+fn secret_keys_list() -> Result<Vec<String>, String> {
+    secrets::list_secret_keys(&app_dir())
+}
+
+#[tauri::command]
+fn secret_set(key: String, value: String) -> Result<(), String> {
+    secrets::set_secret(&app_dir(), key, value)
+}
+
+#[tauri::command]
+fn secret_delete(key: String) -> Result<(), String> {
+    secrets::delete_secret(&app_dir(), &key)
 }
 
 #[tauri::command]
@@ -327,6 +370,102 @@ fn open_external_url(url: String) -> Result<(), String> {
     open::that(url).map_err(|e| e.to_string())
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct RulesDomainInfo {
+    key: String,
+    label: String,
+    /// False when the rules-tree marks the domain as disabled (stub).
+    selectable: bool,
+}
+
+#[tauri::command]
+fn rules_domains_list() -> Result<Vec<RulesDomainInfo>, String> {
+    let tree: serde_json::Value =
+        serde_json::from_str(ai_worker_core::DEFAULT_RULES_TREE_JSON).map_err(|e| e.to_string())?;
+    let domains = tree
+        .get("domains")
+        .and_then(|d| d.as_object())
+        .ok_or_else(|| "rules tree missing domains".to_string())?;
+    let mut out: Vec<RulesDomainInfo> = Vec::new();
+    for (key, v) in domains {
+        let label = v
+            .get("label")
+            .and_then(|x| x.as_str())
+            .unwrap_or(key)
+            .to_string();
+        let enabled_flag = v
+            .get("enabled")
+            .and_then(|x| x.as_bool())
+            .unwrap_or(true);
+        out.push(RulesDomainInfo {
+            key: key.clone(),
+            label,
+            selectable: enabled_flag,
+        });
+    }
+    out.sort_by(|a, b| a.key.cmp(&b.key));
+    Ok(out)
+}
+
+#[tauri::command]
+fn session_peek_pending_restore() -> Result<Option<PendingRestoreFile>, String> {
+    let p = pending_restore_path();
+    if !p.exists() {
+        return Ok(None);
+    }
+    let data = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+    let doc: PendingRestoreFile = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+    if !doc.should_prompt {
+        return Ok(None);
+    }
+    Ok(Some(doc))
+}
+
+#[tauri::command]
+fn session_resolve_restore(choice: String) -> Result<(), String> {
+    let mut workers = read_workers()?;
+    let p = pending_restore_path();
+    let snapshot: HashMap<String, bool> = if p.exists() {
+        let data = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
+        let doc: PendingRestoreFile = serde_json::from_str(&data).map_err(|e| e.to_string())?;
+        doc.enabled_by_worker_id
+    } else {
+        HashMap::new()
+    };
+
+    match choice.as_str() {
+        "restoreSnapshot" => {
+            for w in &mut workers {
+                if let Some(en) = snapshot.get(&w.id) {
+                    w.enabled = *en;
+                }
+            }
+        }
+        "disableAll" => {
+            for w in &mut workers {
+                w.enabled = false;
+            }
+        }
+        "dismiss" => {}
+        _ => return Err(format!("unknown session choice: {choice}")),
+    }
+
+    write_workers(&workers)?;
+
+    let cleared = PendingRestoreFile {
+        should_prompt: false,
+        enabled_by_worker_id: HashMap::new(),
+    };
+    std::fs::create_dir_all(app_dir()).map_err(|e| e.to_string())?;
+    std::fs::write(
+        pending_restore_path(),
+        serde_json::to_string_pretty(&cleared).map_err(|e| e.to_string())?,
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -342,6 +481,9 @@ pub fn run() {
             github_token_configured,
             set_github_token,
             delete_github_token,
+            secret_keys_list,
+            secret_set,
+            secret_delete,
             assemble_prompt_preview,
             ollama_list_models,
             ollama_stack_gpu_hint,
@@ -358,7 +500,15 @@ pub fn run() {
             audit_recent_github,
             app_log_lines,
             open_external_url,
+            rules_domains_list,
+            session_peek_pending_restore,
+            session_resolve_restore,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            if let tauri::RunEvent::Exit = event {
+                write_pending_restore_on_app_exit();
+            }
+        });
 }

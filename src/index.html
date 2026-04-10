@@ -7,120 +7,257 @@
     <link rel="stylesheet" href="./styles.css" />
   </head>
   <body>
-    <header class="header">
-      <div class="header-row">
-        <div>
-          <h1>Local AI Worker</h1>
-          <p class="subtitle">Workers, rules, Docker / Ollama, GitHub secrets</p>
+    <div class="app-shell">
+      <aside class="nav-rail" aria-label="Primary">
+        <div class="brand">
+          <strong>Local AI Worker</strong>
+          <span class="brand-sub">rules · workers · stack</span>
         </div>
-        <div class="header-actions">
-          <button type="button" id="btn-check-updates" class="secondary" title="Check GitHub for updates">
-            Check for updates
-          </button>
-          <button type="button" id="btn-releases" class="secondary">Releases</button>
+        <nav class="nav-buttons">
+          <button type="button" class="nav-item active" data-nav="overview">Overview</button>
+          <button type="button" class="nav-item" data-nav="stack">Ollama stack</button>
+          <button type="button" class="nav-item" data-nav="workers">Workers</button>
+          <button type="button" class="nav-item" data-nav="secrets">Secrets</button>
+          <button type="button" class="nav-item" data-nav="diagnostics">Diagnostics</button>
+        </nav>
+      </aside>
+
+      <div class="main-column">
+        <header class="top-bar">
+          <p class="top-bar-title" id="view-title">Overview</p>
+          <div class="top-bar-actions">
+            <button type="button" id="btn-check-updates" class="secondary" title="Check GitHub for updates">
+              Check for updates
+            </button>
+            <button type="button" id="btn-releases" class="secondary">Releases</button>
+          </div>
+        </header>
+
+        <div class="views">
+          <div class="view active" data-view="overview">
+            <div class="view-grid">
+              <section class="panel">
+                <h2>Environment</h2>
+                <p class="hint">Docker availability and hardware hints for model choice.</p>
+                <div id="env-status" class="status">Loading…</div>
+                <button type="button" id="btn-refresh-env">Refresh</button>
+              </section>
+              <section class="panel">
+                <h2>Quick start</h2>
+                <ol class="quick-steps">
+                  <li><strong>Stack</strong> — start the Ollama Compose stack.</li>
+                  <li><strong>Secrets</strong> — store API tokens (e.g. <code>github_token</code>).</li>
+                  <li><strong>Workers</strong> — configure tasks and start containers.</li>
+                </ol>
+                <p class="hint">
+                  Without explicit mappings, <code>GITHUB_TOKEN</code> is passed to agents when
+                  <code>github_token</code> (or a legacy saved token) exists.
+                </p>
+              </section>
+            </div>
+          </div>
+
+          <div class="view" data-view="stack">
+            <section class="panel wide">
+              <h2>Ollama stack (Docker Compose)</h2>
+              <p class="hint">
+                Compose files are bundled in the app, written to your app data folder, then
+                <code>docker compose</code> is run. GPU mode adds
+                <code>ollama-compose.gpu.yml</code> (<code>gpus: all</code>). Requires Docker Desktop.
+              </p>
+              <div id="compose-hint" class="status"></div>
+              <label class="inline">
+                <span>GPU mode</span>
+                <select id="select-gpu-mode">
+                  <option value="auto">Auto (GPU if nvidia-smi works)</option>
+                  <option value="on">Force GPU</option>
+                  <option value="off">CPU only (no GPU compose override)</option>
+                </select>
+              </label>
+              <div class="row">
+                <button type="button" id="btn-compose-up">Compose up</button>
+                <button type="button" id="btn-compose-down" class="secondary">Compose down</button>
+                <button type="button" id="btn-compose-ps" class="secondary">Status (ps)</button>
+              </div>
+              <pre id="compose-out" class="preview small"></pre>
+            </section>
+            <section class="panel">
+              <h2>Ollama models</h2>
+              <label>
+                <span>Host</span>
+                <input type="text" id="input-ollama" value="http://127.0.0.1:11434" />
+              </label>
+              <button type="button" id="btn-list-models">List tags</button>
+              <pre id="ollama-out" class="preview small"></pre>
+            </section>
+          </div>
+
+          <div class="view" data-view="workers">
+            <section class="panel wide">
+              <h2>Workers</h2>
+              <p class="hint">
+                Map named secrets to container environment variables in each worker card. Empty mapping still
+                forwards <code>GITHUB_TOKEN</code> when a GitHub token secret exists. For a <strong>new</strong> worker,
+                run <strong>Prepare storage</strong> once, then <strong>Start container</strong>. Click
+                <strong>Save workers</strong> before quitting so enabled flags persist (used for the reopen reminder).
+              </p>
+              <div id="workers-list" class="workers"></div>
+              <div class="row">
+                <button type="button" id="btn-add-worker">Add worker</button>
+                <button type="button" id="btn-save-workers">Save workers</button>
+              </div>
+              <p id="workers-msg" class="status"></p>
+            </section>
+          </div>
+
+          <div class="view" data-view="secrets">
+            <section class="panel wide">
+              <h2>Secrets (keychain)</h2>
+              <p class="hint">
+                Names are stored in app data; values live in the OS credential store (Windows Credential
+                Manager / macOS Keychain). Use letters, digits, and underscores; start with a letter.
+              </p>
+              <div class="secret-add row wrap">
+                <label class="inline tight">
+                  <span>Key</span>
+                  <input type="text" id="secret-new-key" autocomplete="off" placeholder="github_token" />
+                </label>
+                <label class="inline tight">
+                  <span>Value</span>
+                  <input type="password" id="secret-new-value" autocomplete="off" placeholder="••••" />
+                </label>
+                <button type="button" id="btn-secret-add">Save secret</button>
+              </div>
+              <p id="secrets-msg" class="status"></p>
+              <div id="secrets-table-wrap" class="secrets-table-wrap">
+                <table class="secrets-table" aria-label="Stored secret keys">
+                  <thead>
+                    <tr>
+                      <th>Key</th>
+                      <th></th>
+                    </tr>
+                  </thead>
+                  <tbody id="secrets-tbody"></tbody>
+                </table>
+              </div>
+            </section>
+          </div>
+
+          <div class="view" data-view="diagnostics">
+            <div class="view-grid">
+              <section class="panel wide">
+                <h2>Prompt preview (rules + domain)</h2>
+                <label>
+                  <span>Domain</span>
+                  <input type="text" id="input-domain" value="git" />
+                </label>
+                <label
+                  >Optional guardrail overrides (JSON object, merged for preview only)
+                  <textarea
+                    id="prompt-guardrails-override"
+                    rows="3"
+                    class="code"
+                    placeholder='{ "rateLimits": { "maxPullRequestsCreatedPerDay": 3 } }'
+                  ></textarea>
+                </label>
+                <button type="button" id="btn-preview-prompt">Assemble preview</button>
+                <pre id="prompt-preview" class="preview"></pre>
+              </section>
+              <section class="panel wide">
+                <h2>GitHub audit (SQLite)</h2>
+                <p class="hint">
+                  Stored at <code>audit.sqlite3</code> under app data. Rows appear when something records them.
+                </p>
+                <div class="row">
+                  <button type="button" id="btn-audit-refresh">Refresh audit log</button>
+                </div>
+                <pre id="audit-out" class="preview small"></pre>
+              </section>
+              <section class="panel wide">
+                <h2>App log</h2>
+                <p class="hint">Recent Compose / worker actions from this session.</p>
+                <div class="row">
+                  <button type="button" id="btn-app-log-refresh">Refresh</button>
+                </div>
+                <pre id="app-log" class="preview small"></pre>
+              </section>
+            </div>
+          </div>
         </div>
       </div>
-    </header>
+    </div>
 
-    <main class="grid">
-      <section class="panel">
-        <h2>Environment</h2>
-        <div id="env-status" class="status">Loading…</div>
-        <button type="button" id="btn-refresh-env">Refresh</button>
-      </section>
+    <datalist id="secret-keys-datalist"></datalist>
 
-      <section class="panel wide">
-        <h2>Ollama stack (Docker Compose)</h2>
-        <p class="hint">
-          Compose files are bundled in the app, written to your app data folder, then
-          <code>docker compose</code> is run. GPU mode adds
-          <code>ollama-compose.gpu.yml</code> (<code>gpus: all</code>). Requires Docker Desktop.
+    <div id="modal-domain" class="modal-overlay" hidden>
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-domain-title">
+        <button type="button" class="modal-close" data-close-modal aria-label="Close">&times;</button>
+        <h2 id="modal-domain-title">Worker domain</h2>
+        <div class="modal-body">
+          <p>
+            The <strong>domain</strong> selects which rules and system-prompt guidelines the agent uses (from the
+            bundled rules tree). It is not a Docker image name or a URL.
+          </p>
+          <p>
+            <strong>git</strong> &mdash; Git / GitHub maintenance: pull request limits, branch safety, repository
+            allowlists, and audit logging for mutations. Use this when the worker should drive
+            <code>git</code>/<code>gh</code> against repos you trust.
+          </p>
+          <p>
+            <strong>market</strong> &mdash; Reserved in the rules tree for future monitoring-style work. It is
+            marked inactive until you extend that domain in the product.
+          </p>
+          <p>
+            <strong>Other (custom key)</strong> &mdash; Only use if you have added a matching domain entry to the
+            rules tree; otherwise validation or prompts may not match what you expect.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-tasks" class="modal-overlay" hidden>
+      <div class="modal-panel" role="dialog" aria-modal="true" aria-labelledby="modal-tasks-title">
+        <button type="button" class="modal-close" data-close-modal aria-label="Close">&times;</button>
+        <h2 id="modal-tasks-title">Tasks: cadence and one-shot</h2>
+        <div class="modal-body">
+          <p>
+            Tasks are instructions the <strong>agent loop</strong> (inside the container) considers on a timer. The
+            loop wakes every <code>pollSeconds</code> (often 45s), builds a short list of <em>due</em> tasks, and
+            sends one chat request to Ollama with that list plus your context.
+          </p>
+          <p>
+            <strong>Cadence (repeating)</strong> &mdash; Runs again after each interval you set (in
+            <strong>seconds</strong>). The loop uses UTC time buckets, so a 3600s cadence is roughly hourly. Good for
+            ongoing maintenance sweeps.
+          </p>
+          <p>
+            <strong>One-shot</strong> &mdash; Included in a run once; after a successful cycle it is marked done in
+            persisted state and skipped later. Good for a finite checklist item.
+          </p>
+          <p>
+            <strong>Why both?</strong> You might want a periodic sweep (cadence) plus several one-time setup items
+            (multiple one-shots). Multiple one-shots are normal when each line item should complete independently.
+          </p>
+        </div>
+      </div>
+    </div>
+
+    <div id="modal-restore" class="modal-overlay" hidden>
+      <div class="modal-panel modal-panel--narrow" role="dialog" aria-modal="true" aria-labelledby="modal-restore-title">
+        <button type="button" class="modal-close" id="btn-restore-close" aria-label="Close">&times;</button>
+        <h2 id="modal-restore-title">Welcome back</h2>
+        <p id="modal-restore-lead" class="modal-body"></p>
+        <div class="modal-actions">
+          <button type="button" id="btn-restore-snapshot" class="secondary">Restore saved on/off states</button>
+          <button type="button" id="btn-restore-disable" class="secondary">Disable all workers</button>
+          <button type="button" id="btn-restore-dismiss">Leave workers as in file</button>
+        </div>
+        <p class="hint modal-foot">
+          After a full shutdown, Docker may have stopped your containers. Enabled workers may still need
+          <strong>Start container</strong> on the Workers page.
         </p>
-        <div id="compose-hint" class="status"></div>
-        <label class="inline">
-          <span>GPU mode</span>
-          <select id="select-gpu-mode">
-            <option value="auto">Auto (GPU if nvidia-smi works)</option>
-            <option value="on">Force GPU</option>
-            <option value="off">CPU only (no GPU compose override)</option>
-          </select>
-        </label>
-        <div class="row">
-          <button type="button" id="btn-compose-up">Compose up</button>
-          <button type="button" id="btn-compose-down" class="secondary">Compose down</button>
-          <button type="button" id="btn-compose-ps" class="secondary">Status (ps)</button>
-        </div>
-        <pre id="compose-out" class="preview small"></pre>
-      </section>
-
-      <section class="panel">
-        <h2>GitHub token</h2>
-        <p class="hint">Stored in Windows Credential Manager or macOS Keychain.</p>
-        <label>
-          <span>Token (write-only field)</span>
-          <input type="password" id="input-token" autocomplete="off" placeholder="ghp_…" />
-        </label>
-        <div class="row">
-          <button type="button" id="btn-save-token">Save</button>
-          <button type="button" id="btn-clear-token" class="secondary">Clear</button>
-        </div>
-        <div id="token-status" class="status"></div>
-      </section>
-
-      <section class="panel wide">
-        <h2>Workers</h2>
-        <div id="workers-list" class="workers"></div>
-        <div class="row">
-          <button type="button" id="btn-add-worker">Add worker</button>
-          <button type="button" id="btn-save-workers">Save workers</button>
-        </div>
-        <p id="workers-msg" class="status"></p>
-      </section>
-
-      <section class="panel wide">
-        <h2>Prompt preview (rules + domain)</h2>
-        <label>
-          <span>Domain</span>
-          <input type="text" id="input-domain" value="git" />
-        </label>
-        <label>Optional guardrail overrides (JSON object, merged for preview only)
-          <textarea id="prompt-guardrails-override" rows="3" class="code" placeholder='{ "rateLimits": { "maxPullRequestsCreatedPerDay": 3 } }'></textarea>
-        </label>
-        <button type="button" id="btn-preview-prompt">Assemble preview</button>
-        <pre id="prompt-preview" class="preview"></pre>
-      </section>
-
-      <section class="panel wide">
-        <h2>GitHub audit (SQLite)</h2>
-        <p class="hint">
-          Stored at <code>audit.sqlite3</code> under app data. Use
-          <code>audit_record_github</code> from automation later; for now, rows appear when something records them.
-        </p>
-        <div class="row">
-          <button type="button" id="btn-audit-refresh">Refresh audit log</button>
-        </div>
-        <pre id="audit-out" class="preview small"></pre>
-      </section>
-
-      <section class="panel wide">
-        <h2>App log</h2>
-        <p class="hint">Recent Compose / worker actions from this session.</p>
-        <div class="row">
-          <button type="button" id="btn-app-log-refresh">Refresh</button>
-        </div>
-        <pre id="app-log" class="preview small"></pre>
-      </section>
-
-      <section class="panel">
-        <h2>Ollama models</h2>
-        <label>
-          <span>Host</span>
-          <input type="text" id="input-ollama" value="http://127.0.0.1:11434" />
-        </label>
-        <button type="button" id="btn-list-models">List tags</button>
-        <pre id="ollama-out" class="preview small"></pre>
-      </section>
-    </main>
+      </div>
+    </div>
 
     <script type="module" src="./main.js"></script>
   </body>

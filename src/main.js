@@ -5,6 +5,77 @@ import {
   startUpdateCheckScheduler,
 } from "./updater.js";
 
+const VIEW_TITLES = {
+  overview: "Overview",
+  stack: "Ollama stack",
+  workers: "Workers",
+  secrets: "Secrets",
+  diagnostics: "Diagnostics",
+};
+
+/** @type {{ key: string, label: string, selectable: boolean }[]} */
+let domainsCache = [];
+const draftWorkerIds = new Set();
+
+function showView(navId) {
+  document.querySelectorAll(".nav-item").forEach((b) => {
+    b.classList.toggle("active", b.dataset.nav === navId);
+  });
+  document.querySelectorAll(".view").forEach((v) => {
+    v.classList.toggle("active", v.dataset.view === navId);
+  });
+  const title = document.getElementById("view-title");
+  if (title) title.textContent = VIEW_TITLES[navId] || navId;
+}
+
+document.querySelectorAll(".nav-item").forEach((btn) => {
+  btn.addEventListener("click", () => showView(btn.dataset.nav));
+});
+
+function openModal(el) {
+  if (el) el.hidden = false;
+}
+
+function closeModal(el) {
+  if (el) el.hidden = true;
+}
+
+function wireModalOverlay(id) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  el.addEventListener("click", (e) => {
+    if (e.target === el) closeModal(el);
+  });
+  el.querySelectorAll("[data-close-modal]").forEach((btn) => {
+    btn.addEventListener("click", () => closeModal(el));
+  });
+}
+
+wireModalOverlay("modal-domain");
+wireModalOverlay("modal-tasks");
+
+async function loadRulesDomains() {
+  try {
+    domainsCache = await invoke("rules_domains_list");
+  } catch {
+    domainsCache = [{ key: "git", label: "Git / GitHub maintenance", selectable: true }];
+  }
+}
+
+async function maybeShowRestorePrompt() {
+  try {
+    const pending = await invoke("session_peek_pending_restore");
+    if (!pending) return;
+    const lead = document.getElementById("modal-restore-lead");
+    const snap = pending.enabledByWorkerId || {};
+    const n = Object.keys(snap).length;
+    lead.textContent = `When you last closed the app, at least one worker was marked enabled in your saved config. That snapshot had ${n} worker id(s). Choose how to set the enabled checkboxes for this session:`;
+    openModal(document.getElementById("modal-restore"));
+  } catch (e) {
+    console.warn(e);
+  }
+}
+
 async function refreshEnv() {
   const el = document.getElementById("env-status");
   try {
@@ -24,6 +95,7 @@ ${hw.notes}`;
 
 async function refreshComposeHint() {
   const el = document.getElementById("compose-hint");
+  if (!el) return;
   try {
     const h = await invoke("ollama_stack_gpu_hint");
     el.textContent = `Compose dir: ${h.composeDir}
@@ -38,16 +110,6 @@ function gpuModeArg() {
   if (v === "auto") return null;
   if (v === "on") return true;
   return false;
-}
-
-async function refreshTokenStatus() {
-  const el = document.getElementById("token-status");
-  try {
-    const ok = await invoke("github_token_configured");
-    el.textContent = ok ? "A token is stored." : "No token stored.";
-  } catch (e) {
-    el.textContent = String(e);
-  }
 }
 
 async function refreshAppLog() {
@@ -89,6 +151,7 @@ function workerTemplate(id) {
     contextPath: null,
     longTermVolume: null,
     dockerImage: null,
+    envFromSecrets: [],
   };
 }
 
@@ -109,37 +172,146 @@ function findWorkerIndex(wid) {
   return workersCache.findIndex((w) => w.id === wid);
 }
 
+function ensureEnvBindings(w) {
+  if (!Array.isArray(w.envFromSecrets)) w.envFromSecrets = [];
+}
+
+function domainSelectHtml(w) {
+  const inList = domainsCache.some((d) => d.key === w.maintenanceDomain);
+  const otherSel = !inList;
+  const opts = domainsCache
+    .map(
+      (d) =>
+        `<option value="${escapeAttr(d.key)}" ${!d.selectable ? "disabled" : ""} ${w.maintenanceDomain === d.key ? "selected" : ""}>${escapeAttr(d.label)} (${escapeAttr(d.key)})</option>`,
+    )
+    .join("");
+  const otherClass = inList ? "domain-other hidden" : "domain-other";
+  const customVal = inList ? "" : escapeAttr(w.maintenanceDomain);
+  return `
+    <label>Domain
+      <select data-domain-select data-wid="${escapeAttr(w.id)}">
+        ${opts}
+        <option value="__other__" ${otherSel ? "selected" : ""}>Other (custom key)…</option>
+      </select>
+    </label>
+    <label class="${otherClass}" data-domain-other-wrap="${escapeAttr(w.id)}">
+      <span>Custom domain key</span>
+      <input type="text" data-domain-custom data-wid="${escapeAttr(w.id)}" value="${customVal}" placeholder="e.g. git" />
+    </label>
+    <p class="hint">The domain chooses which rule pack and prompt guidelines apply.</p>
+    <div class="row tight">
+      <button type="button" class="secondary small-pad" data-action="show-domain-help">What is a domain?</button>
+      <button type="button" class="secondary small-pad" data-action="show-tasks-help">Tasks &amp; cadence</button>
+    </div>
+  `;
+}
+
+async function refreshSecretDatalist() {
+  const dl = document.getElementById("secret-keys-datalist");
+  if (!dl) return;
+  try {
+    const keys = await invoke("secret_keys_list");
+    dl.innerHTML = keys.map((k) => `<option value="${escapeAttr(k)}"></option>`).join("");
+  } catch {
+    dl.innerHTML = "";
+  }
+}
+
+async function refreshSecretsTable() {
+  const tbody = document.getElementById("secrets-tbody");
+  const msg = document.getElementById("secrets-msg");
+  if (!tbody) return;
+  try {
+    const keys = await invoke("secret_keys_list");
+    if (keys.length === 0) {
+      tbody.innerHTML = `<tr><td colspan="2" class="hint">No secrets yet.</td></tr>`;
+    } else {
+      tbody.innerHTML = keys
+        .map(
+          (k) =>
+            `<tr><td><code>${escapeAttr(k)}</code></td><td><button type="button" class="secondary small-pad" data-secret-remove="${escapeAttr(k)}">Remove</button></td></tr>`,
+        )
+        .join("");
+    }
+    if (msg) msg.textContent = "";
+  } catch (e) {
+    tbody.innerHTML = "";
+    if (msg) msg.textContent = String(e);
+  }
+  await refreshSecretDatalist();
+}
+
 function renderWorkers(workers) {
   const root = document.getElementById("workers-list");
   root.innerHTML = "";
   workers.forEach((w) => {
+    ensureEnvBindings(w);
     const gr =
       w.guardrailOverrides != null
         ? JSON.stringify(w.guardrailOverrides, null, 2)
         : "";
     const tasksHtml = w.tasks
+      .map((t, ti) => {
+        const isCad = t.schedule.kind === "cadence";
+        const intv = isCad ? t.schedule.intervalSeconds : 3600;
+        return `<div class="task-row-editable" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}">
+  <input type="text" data-task-field="title" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}" value="${escapeAttr(t.title)}" />
+  <select data-task-field="kind" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}">
+    <option value="cadence" ${isCad ? "selected" : ""}>Repeating (cadence)</option>
+    <option value="oneShot" ${!isCad ? "selected" : ""}>One-shot</option>
+  </select>
+  <span class="task-interval-wrap ${isCad ? "" : "hidden"}" data-task-interval-wrap>
+    <label class="inline tight"><span>Interval (sec)</span>
+      <input type="number" min="30" step="1" data-task-field="interval" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}" value="${intv}" />
+    </label>
+  </span>
+  <button type="button" class="linkish" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}" data-action="task-remove">remove</button>
+</div>`;
+      })
+      .join("");
+
+    const bindHtml = w.envFromSecrets
       .map(
-        (t, ti) =>
-          `<div class="task-row">${escapeAttr(t.title)} <span class="task-kind">(${t.schedule.kind})</span> <button type="button" class="linkish" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}" data-action="task-remove">remove</button></div>`,
+        (b, bi) =>
+          `<div class="env-bind-row">
+ <input type="text" data-env-bind="1" data-wid="${escapeAttr(w.id)}" data-env-idx="${bi}" data-env-part="envVar" value="${escapeAttr(b.envVar || "")}" placeholder="GITHUB_TOKEN" />
+            <span class="env-bind-arrow">←</span>
+            <input type="text" data-env-bind="1" data-wid="${escapeAttr(w.id)}" data-env-idx="${bi}" data-env-part="secretKey" value="${escapeAttr(b.secretKey || "")}" placeholder="secret key" list="secret-keys-datalist" />
+            <button type="button" class="secondary small-pad" data-action="env-bind-remove" data-wid="${escapeAttr(w.id)}" data-env-idx="${bi}">Remove</button>
+          </div>`,
       )
       .join("");
 
+    const isDraft = draftWorkerIds.has(w.id);
     const card = document.createElement("div");
-    card.className = "worker-card";
+    card.className = `worker-card ${w.enabled ? "worker-card--on" : "worker-card--off"}`;
     card.dataset.workerId = w.id;
     card.innerHTML = `
       <div class="worker-head">
-        <strong>${escapeAttr(w.name)}</strong>
-        <code class="wid">${escapeAttr(w.id)}</code>
+        <div>
+          <strong>${escapeAttr(w.name)}</strong>
+          <code class="wid">${escapeAttr(w.id)}</code>
+        </div>
+        <span class="worker-status ${w.enabled ? "worker-status--on" : "worker-status--off"}">${w.enabled ? "Enabled" : "Disabled"}</span>
       </div>
+      ${isDraft ? `<div class="row"><button type="button" class="secondary" data-action="worker-discard" data-wid="${escapeAttr(w.id)}">Discard new worker</button></div>` : ""}
       <label>Name <input data-k="name" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.name)}" /></label>
-      <label>Domain <input data-k="maintenanceDomain" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.maintenanceDomain)}" /></label>
+      ${domainSelectHtml(w)}
       <label>Model override <input data-k="modelOverride" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.modelOverride || "")}" placeholder="gemma4:e2b" /></label>
       <label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.dockerImage || "")}" placeholder="local-ai-worker-agent:latest" /></label>
-      <label><input data-k="enabled" data-wid="${escapeAttr(w.id)}" type="checkbox" ${w.enabled ? "checked" : ""} /> Enabled</label>
+      <label class="enable-row"><input data-k="enabled" data-wid="${escapeAttr(w.id)}" type="checkbox" ${w.enabled ? "checked" : ""} /> Worker enabled</label>
       <label>Guardrail overrides (JSON object, merged into domain guardrails)
         <textarea data-field="guardrails" data-wid="${escapeAttr(w.id)}" rows="5" class="code">${escapeTextarea(gr)}</textarea>
       </label>
+      <div class="env-bind-block">
+        <div class="env-bind-label">Secrets → container environment</div>
+        <div class="env-bind-rows">
+          ${bindHtml || '<p class="hint">No mappings — default <code>GITHUB_TOKEN</code> still applies when configured.</p>'}
+        </div>
+        <div class="row">
+          <button type="button" data-action="env-bind-add" data-wid="${escapeAttr(w.id)}">+ Map secret to env</button>
+        </div>
+      </div>
       <div class="task-block">
         <div class="task-label">Tasks</div>
         ${tasksHtml || "<p class=\"hint\">No tasks</p>"}
@@ -152,13 +324,29 @@ function renderWorkers(workers) {
         Context: ${w.contextPath ? escapeAttr(w.contextPath) : "— (run Prepare)"}<br/>
         Volume: ${w.longTermVolume ? escapeAttr(w.longTermVolume) : "—"}
       </div>
-      <div class="row wrap">
-        <button type="button" data-docker="prepare" data-wid="${escapeAttr(w.id)}">Prepare storage</button>
-        <button type="button" data-docker="start" data-wid="${escapeAttr(w.id)}">Start container</button>
-        <button type="button" data-docker="stop" data-wid="${escapeAttr(w.id)}" class="secondary">Stop</button>
-        <button type="button" data-docker="recreate" data-wid="${escapeAttr(w.id)}" class="secondary">Recreate</button>
-        <button type="button" data-docker="status" data-wid="${escapeAttr(w.id)}" class="secondary">Status</button>
-        <button type="button" data-docker="logs" data-wid="${escapeAttr(w.id)}" class="secondary">Logs</button>
+      <div class="docker-steps">
+        <div class="docker-step">
+          <span class="step-num">1</span>
+          <div class="docker-step-body">
+            <strong>Prepare storage</strong>
+            <p class="hint">Run this first for a new worker: creates the context file, Docker volume, and agent files on disk.</p>
+            <button type="button" data-docker="prepare" data-wid="${escapeAttr(w.id)}">Prepare storage</button>
+          </div>
+        </div>
+        <div class="docker-step">
+          <span class="step-num">2</span>
+          <div class="docker-step-body">
+            <strong>Start container</strong>
+            <p class="hint">After step 1, start (or restart) the agent container. Use this after reboots too; it does not replace Prepare.</p>
+            <div class="row wrap">
+              <button type="button" data-docker="start" data-wid="${escapeAttr(w.id)}">Start container</button>
+              <button type="button" data-docker="stop" data-wid="${escapeAttr(w.id)}" class="secondary">Stop</button>
+              <button type="button" data-docker="recreate" data-wid="${escapeAttr(w.id)}" class="secondary">Recreate</button>
+              <button type="button" data-docker="status" data-wid="${escapeAttr(w.id)}" class="secondary">Status</button>
+              <button type="button" data-docker="logs" data-wid="${escapeAttr(w.id)}" class="secondary">Logs</button>
+            </div>
+          </div>
+        </div>
       </div>
       <pre class="worker-docker-out preview small" data-wid="${escapeAttr(w.id)}"></pre>
     `;
@@ -177,6 +365,7 @@ function renderWorkers(workers) {
       else if (k === "dockerImage")
         workersCache[i].dockerImage = inp.value.trim() || null;
       else workersCache[i][k] = inp.value;
+      if (k === "enabled") renderWorkers(workersCache);
     });
   });
 
@@ -204,11 +393,117 @@ let workersCache = [];
 
 async function loadWorkers() {
   workersCache = await invoke("get_workers");
+  workersCache.forEach(ensureEnvBindings);
   renderWorkers(workersCache);
 }
 
+document.getElementById("workers-list").addEventListener("change", (e) => {
+  const t = e.target;
+  const root = document.getElementById("workers-list");
+
+  const kindSel = t.closest("select[data-task-field='kind']");
+  if (kindSel) {
+    const wid = kindSel.dataset.wid;
+    const ti = Number(kindSel.dataset.taskIdx);
+    const i = findWorkerIndex(wid);
+    if (i < 0) return;
+    const task = workersCache[i].tasks[ti];
+    if (!task) return;
+    if (kindSel.value === "cadence") {
+      const prev = task.schedule.kind === "cadence" ? task.schedule.intervalSeconds : 3600;
+      task.schedule = { kind: "cadence", intervalSeconds: prev };
+    } else {
+      task.schedule = { kind: "oneShot" };
+    }
+    renderWorkers(workersCache);
+    return;
+  }
+
+  const sel = t.closest("[data-domain-select]");
+  if (sel) {
+    const wid = sel.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i < 0) return;
+    const wrap = root.querySelector(`[data-domain-other-wrap="${wid}"]`);
+    const customInp = wrap?.querySelector("[data-domain-custom]");
+    if (sel.value === "__other__") {
+      wrap?.classList.remove("hidden");
+      if (customInp) customInp.value = workersCache[i].maintenanceDomain || "";
+    } else {
+      workersCache[i].maintenanceDomain = sel.value;
+      wrap?.classList.add("hidden");
+    }
+    return;
+  }
+
+  const titleInp = t.closest("input[data-task-field='title']");
+  if (titleInp) {
+    const wid = titleInp.dataset.wid;
+    const ti = Number(titleInp.dataset.taskIdx);
+    const i = findWorkerIndex(wid);
+    if (i >= 0 && workersCache[i].tasks[ti]) {
+      workersCache[i].tasks[ti].title = titleInp.value;
+    }
+    return;
+  }
+
+  const intInp = t.closest("input[data-task-field='interval']");
+  if (intInp) {
+    const wid = intInp.dataset.wid;
+    const ti = Number(intInp.dataset.taskIdx);
+    const i = findWorkerIndex(wid);
+    const task = i >= 0 ? workersCache[i].tasks[ti] : null;
+    if (task && task.schedule.kind === "cadence") {
+      const v = Math.max(30, Number(intInp.value) || 3600);
+      task.schedule.intervalSeconds = v;
+      intInp.value = String(v);
+    }
+  }
+});
+
+document.getElementById("workers-list").addEventListener("input", (e) => {
+  const inp = e.target.closest("input[data-env-bind]");
+  if (inp) {
+    const wid = inp.dataset.wid;
+    const idx = Number(inp.dataset.envIdx);
+    const part = inp.dataset.envPart;
+    const i = findWorkerIndex(wid);
+    if (i < 0 || idx < 0 || !workersCache[i].envFromSecrets[idx]) return;
+    if (part === "envVar") workersCache[i].envFromSecrets[idx].envVar = inp.value;
+    else if (part === "secretKey") workersCache[i].envFromSecrets[idx].secretKey = inp.value;
+    return;
+  }
+
+  const custom = e.target.closest("[data-domain-custom]");
+  if (custom) {
+    const wid = custom.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i < 0) return;
+    workersCache[i].maintenanceDomain = custom.value.trim() || workersCache[i].maintenanceDomain;
+  }
+});
+
 document.getElementById("workers-list").addEventListener("click", async (e) => {
   const t = e.target;
+
+  if (t.closest("[data-action='show-domain-help']")) {
+    openModal(document.getElementById("modal-domain"));
+    return;
+  }
+  if (t.closest("[data-action='show-tasks-help']")) {
+    openModal(document.getElementById("modal-tasks"));
+    return;
+  }
+
+  const discard = t.closest("[data-action='worker-discard']");
+  if (discard) {
+    const wid = discard.dataset.wid;
+    draftWorkerIds.delete(wid);
+    workersCache = workersCache.filter((w) => w.id !== wid);
+    renderWorkers(workersCache);
+    return;
+  }
+
   const rm = t.closest("[data-action='task-remove']");
   if (rm) {
     const wid = rm.dataset.wid;
@@ -216,6 +511,28 @@ document.getElementById("workers-list").addEventListener("click", async (e) => {
     const i = findWorkerIndex(wid);
     if (i >= 0 && ti >= 0) {
       workersCache[i].tasks.splice(ti, 1);
+      renderWorkers(workersCache);
+    }
+    return;
+  }
+  const erm = t.closest("[data-action='env-bind-remove']");
+  if (erm) {
+    const wid = erm.dataset.wid;
+    const ei = Number(erm.dataset.envIdx);
+    const i = findWorkerIndex(wid);
+    if (i >= 0 && ei >= 0) {
+      workersCache[i].envFromSecrets.splice(ei, 1);
+      renderWorkers(workersCache);
+    }
+    return;
+  }
+  const eadd = t.closest("[data-action='env-bind-add']");
+  if (eadd) {
+    const wid = eadd.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      ensureEnvBindings(workersCache[i]);
+      workersCache[i].envFromSecrets.push({ envVar: "GITHUB_TOKEN", secretKey: "github_token" });
       renderWorkers(workersCache);
     }
     return;
@@ -316,28 +633,46 @@ document.getElementById("btn-compose-ps").addEventListener("click", async () => 
   }
 });
 
-document.getElementById("btn-save-token").addEventListener("click", async () => {
-  const v = document.getElementById("input-token").value.trim();
-  if (!v) return;
+document.getElementById("btn-secret-add").addEventListener("click", async () => {
+  const keyEl = document.getElementById("secret-new-key");
+  const valEl = document.getElementById("secret-new-value");
+  const msg = document.getElementById("secrets-msg");
+  const key = keyEl.value.trim();
+  const value = valEl.value;
+  if (!key || !value) {
+    msg.textContent = "Enter both key and value.";
+    return;
+  }
   try {
-    await invoke("set_github_token", { token: v });
-    document.getElementById("input-token").value = "";
-    await refreshTokenStatus();
+    await invoke("secret_set", { key, value });
+    valEl.value = "";
+    msg.textContent = "Saved.";
+    await refreshSecretsTable();
   } catch (e) {
-    document.getElementById("token-status").textContent = String(e);
+    msg.textContent = String(e);
   }
 });
-document.getElementById("btn-clear-token").addEventListener("click", async () => {
+
+document.getElementById("secrets-tbody")?.addEventListener("click", async (e) => {
+  const btn = e.target.closest("[data-secret-remove]");
+  if (!btn) return;
+  const key = btn.getAttribute("data-secret-remove");
+  if (!key) return;
+  const msg = document.getElementById("secrets-msg");
+  if (!window.confirm(`Remove secret "${key}" from the keychain?`)) return;
   try {
-    await invoke("delete_github_token");
-    await refreshTokenStatus();
-  } catch (e) {
-    document.getElementById("token-status").textContent = String(e);
+    await invoke("secret_delete", { key });
+    if (msg) msg.textContent = "Removed.";
+    await refreshSecretsTable();
+  } catch (err) {
+    if (msg) msg.textContent = String(err);
   }
 });
 
 document.getElementById("btn-add-worker").addEventListener("click", () => {
-  workersCache.push(workerTemplate(crypto.randomUUID()));
+  const id = crypto.randomUUID();
+  draftWorkerIds.add(id);
+  workersCache.push(workerTemplate(id));
   renderWorkers(workersCache);
 });
 
@@ -346,10 +681,29 @@ document.getElementById("btn-save-workers").addEventListener("click", async () =
   try {
     await invoke("save_workers", { workers: workersCache });
     msg.textContent = "Saved.";
+    draftWorkerIds.clear();
     await loadWorkers();
   } catch (e) {
     msg.textContent = String(e);
   }
+});
+
+async function resolveRestore(choice) {
+  try {
+    await invoke("session_resolve_restore", { choice });
+    closeModal(document.getElementById("modal-restore"));
+    await loadWorkers();
+  } catch (e) {
+    window.alert(String(e));
+  }
+}
+
+document.getElementById("btn-restore-snapshot")?.addEventListener("click", () => resolveRestore("restoreSnapshot"));
+document.getElementById("btn-restore-disable")?.addEventListener("click", () => resolveRestore("disableAll"));
+document.getElementById("btn-restore-dismiss")?.addEventListener("click", () => resolveRestore("dismiss"));
+document.getElementById("btn-restore-close")?.addEventListener("click", () => resolveRestore("dismiss"));
+document.getElementById("modal-restore")?.addEventListener("click", (e) => {
+  if (e.target === e.currentTarget) resolveRestore("dismiss");
 });
 
 document.getElementById("btn-preview-prompt").addEventListener("click", async () => {
@@ -384,14 +738,25 @@ document.getElementById("btn-list-models").addEventListener("click", async () =>
 document.getElementById("btn-audit-refresh").addEventListener("click", refreshAudit);
 document.getElementById("btn-app-log-refresh").addEventListener("click", refreshAppLog);
 
-refreshEnv();
-refreshComposeHint().catch(() => {});
-refreshTokenStatus();
-refreshAppLog().catch(() => {});
-refreshAudit().catch(() => {});
-loadWorkers().catch((e) => {
-  document.getElementById("workers-msg").textContent = String(e);
-});
+async function boot() {
+  await loadRulesDomains();
+  refreshEnv();
+  refreshComposeHint().catch(() => {});
+  refreshAppLog().catch(() => {});
+  refreshAudit().catch(() => {});
+  refreshSecretsTable().catch((e) => {
+    const m = document.getElementById("secrets-msg");
+    if (m) m.textContent = String(e);
+  });
+  try {
+    await loadWorkers();
+  } catch (e) {
+    document.getElementById("workers-msg").textContent = String(e);
+  }
+  await maybeShowRestorePrompt();
+}
+
+boot();
 
 try {
   startUpdateCheckScheduler();

@@ -5,12 +5,11 @@ use ai_worker_core::context::WorkerContext;
 use ai_worker_core::hardware;
 use ai_worker_core::rules::{self, RulesTree};
 use ai_worker_core::worker_config::WorkerDefinition;
-use keyring::Entry;
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const KEYRING_SERVICE: &str = "local-ai-worker";
-const GITHUB_TOKEN_USER: &str = "github_api_token";
+use crate::secrets;
 
 pub fn container_name_for_worker(worker_id: &str) -> String {
     let safe: String = worker_id
@@ -142,11 +141,40 @@ pub fn materialize_worker_runtime(app_root: &Path, w: &WorkerDefinition) -> Resu
     Ok(())
 }
 
-fn github_token() -> Option<String> {
-    Entry::new(KEYRING_SERVICE, GITHUB_TOKEN_USER)
-        .ok()
-        .and_then(|e| e.get_password().ok())
-        .filter(|s| !s.is_empty())
+fn collect_container_secret_env(w: &WorkerDefinition) -> Result<Vec<(String, String)>, String> {
+    let mut seen = HashSet::<String>::new();
+    let mut out = Vec::<(String, String)>::new();
+    for b in &w.env_from_secrets {
+        let ev = b.env_var.trim();
+        let sk = b.secret_key.trim();
+        if ev.is_empty() {
+            return Err("envFromSecrets: envVar cannot be empty".into());
+        }
+        if sk.is_empty() {
+            return Err(format!("envFromSecrets: secretKey required for {ev}"));
+        }
+        let val = if sk == "github_token" {
+            secrets::github_token_for_container()
+        } else {
+            secrets::resolve_secret_value(sk)
+        };
+        let Some(val) = val else {
+            return Err(format!(
+                "secret '{sk}' is not set — add it under Secrets (or use github_token)"
+            ));
+        };
+        if !seen.insert(ev.to_string()) {
+            return Err(format!("duplicate env var in envFromSecrets: {ev}"));
+        }
+        out.push((ev.to_string(), val));
+    }
+    const GH: &str = "GITHUB_TOKEN";
+    if !seen.contains(GH) {
+        if let Some(tok) = secrets::github_token_for_container() {
+            out.push((GH.to_string(), tok));
+        }
+    }
+    Ok(out)
 }
 
 pub fn worker_start(app_root: &Path, audit_db: &Path, w: &WorkerDefinition) -> Result<String, String> {
@@ -202,8 +230,9 @@ pub fn worker_start(app_root: &Path, audit_db: &Path, w: &WorkerDefinition) -> R
     cmd.arg("-e").arg("AI_CONTEXT_PATH=/workspace/context.json");
     cmd.arg("-e").arg("AI_AGENT_CONFIG=/workspace/agent-config.json");
     cmd.arg("-e").arg("AI_AGENT_LOOP=1");
-    if let Some(tok) = github_token() {
-        cmd.arg("-e").arg(format!("GITHUB_TOKEN={tok}"));
+    let secret_env = collect_container_secret_env(w)?;
+    for (k, v) in secret_env {
+        cmd.arg("-e").arg(format!("{k}={v}"));
     }
     cmd.arg(&image);
 
