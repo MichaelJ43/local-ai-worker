@@ -49,7 +49,7 @@ Desktop app (Tauri + Rust) to manage autonomous AI workers against **Docker-host
 
 ## Default model
 
-With **no GPU** and typical **16 GB RAM**, the app suggests **`gemma4:e2b`**. Override per worker in the UI / saved JSON.
+The **Environment** panel runs host **GPU heuristics** (NVIDIA via `nvidia-smi`, plus macOS / Linux / Windows adapter detection) and sets **`hasDiscreteGpuHint`** in the hardware profile. The suggested tag stays **`gemma4:e2b`** by default; override per worker in the UI / saved JSON.
 
 ## Tests
 

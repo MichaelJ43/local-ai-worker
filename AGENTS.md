@@ -75,6 +75,10 @@ Typical contents:
 
 ## Core concepts
 
+### Hardware / GPU hints
+
+`crates/ai_worker_core/src/hardware.rs` **`probe_system`** sets **`hasDiscreteGpuHint`** and **`notes`** using, in order: **`nvidia-smi -L`** (with optional VRAM query); else **macOS** Apple Silicon (`aarch64`) or `system_profiler SPDisplaysDataType -json`; else **Linux** `lspci` for VGA/3D/display lines; else **Windows** `Get-CimInstance Win32_VideoController`. **`nvidia_smi_available`** is shared with Tauri **`compose`** for the Ollama GPU compose file.
+
 ### Worker definition (`WorkerDefinition`)
 
 - **`maintenanceDomain`** — Key into `rules-tree.json` `domains` (e.g. `git`). Drives guardrails + prompt section.
