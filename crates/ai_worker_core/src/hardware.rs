@@ -120,6 +120,24 @@ fn linux_lspci_gpu_note() -> Option<String> {
 }
 
 #[cfg(target_os = "windows")]
+fn meaningful_windows_gpu_name(name: &str) -> bool {
+    let n = name.to_lowercase();
+    if n.contains("microsoft basic render")
+        || n.contains("microsoft remote display")
+        || n == "microsoft basic display adapter"
+    {
+        return false;
+    }
+    n.contains("nvidia")
+        || n.contains("amd")
+        || n.contains("radeon")
+        || n.contains("intel arc")
+        || n.contains("rtx")
+        || n.contains("gtx")
+        || n.contains("rx ")
+}
+
+#[cfg(target_os = "windows")]
 fn windows_video_adapter_note() -> Option<String> {
     const CMD: &str =
         "Get-CimInstance Win32_VideoController | Select-Object -ExpandProperty Name";
@@ -162,23 +180,6 @@ fn windows_video_adapter_note() -> Option<String> {
 #[cfg(not(target_os = "windows"))]
 fn windows_video_adapter_note() -> Option<String> {
     None
-}
-
-fn meaningful_windows_gpu_name(name: &str) -> bool {
-    let n = name.to_lowercase();
-    if n.contains("microsoft basic render")
-        || n.contains("microsoft remote display")
-        || n == "microsoft basic display adapter"
-    {
-        return false;
-    }
-    n.contains("nvidia")
-        || n.contains("amd")
-        || n.contains("radeon")
-        || n.contains("intel arc")
-        || n.contains("rtx")
-        || n.contains("gtx")
-        || n.contains("rx ")
 }
 
 pub fn probe_system() -> HardwareProfile {
@@ -238,9 +239,10 @@ mod tests {
         assert!(!p.suggested_model.is_empty());
     }
 
+    #[cfg(target_os = "windows")]
     #[test]
     fn meaningful_windows_gpu_name_filters_basic() {
-        assert!(!meaningful_windows_gpu_name("Microsoft Basic Render Driver"));
-        assert!(meaningful_windows_gpu_name("NVIDIA GeForce RTX 3080"));
+        assert!(!super::meaningful_windows_gpu_name("Microsoft Basic Render Driver"));
+        assert!(super::meaningful_windows_gpu_name("NVIDIA GeForce RTX 3080"));
     }
 }
