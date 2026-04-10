@@ -1,0 +1,7 @@
+# Override: NVIDIA GPU (Docker Desktop + NVIDIA Container Toolkit / WSL2 GPU).
+# Merged with ollama-compose.base.yml when the app enables GPU mode.
+services:
+  ollama:
+    gpus: all
+    environment:
+      - NVIDIA_VISIBLE_DEVICES=all

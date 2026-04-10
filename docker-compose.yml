@@ -1,0 +1,17 @@
+# Ollama for Gemma 4 — optional manual stack (mirrors bundled app compose).
+# The desktop app embeds the same definition under src-tauri/resources/compose/.
+# Pull model after start: docker exec -it local-ai-ollama ollama pull gemma4:e2b
+name: local-ai-ollama
+
+services:
+  ollama:
+    image: ollama/ollama:0.20.2
+    container_name: local-ai-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

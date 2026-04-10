@@ -1,0 +1,20 @@
+{
+  "name": "local-ai-worker",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite",
+    "build": "vite build",
+    "preview": "vite preview --port 4173 --strictPort",
+    "tauri": "tauri",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@tauri-apps/api": "^2"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.49.0",
+    "@tauri-apps/cli": "^2",
+    "vite": "^5.4.0"
+  }
+}

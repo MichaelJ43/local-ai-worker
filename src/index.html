@@ -1,0 +1,117 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Local AI Worker</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="header">
+      <h1>Local AI Worker</h1>
+      <p class="subtitle">Workers, rules, Docker / Ollama, GitHub secrets</p>
+    </header>
+
+    <main class="grid">
+      <section class="panel">
+        <h2>Environment</h2>
+        <div id="env-status" class="status">Loading…</div>
+        <button type="button" id="btn-refresh-env">Refresh</button>
+      </section>
+
+      <section class="panel wide">
+        <h2>Ollama stack (Docker Compose)</h2>
+        <p class="hint">
+          Compose files are bundled in the app, written to your app data folder, then
+          <code>docker compose</code> is run. GPU mode adds
+          <code>ollama-compose.gpu.yml</code> (<code>gpus: all</code>). Requires Docker Desktop.
+        </p>
+        <div id="compose-hint" class="status"></div>
+        <label class="inline">
+          <span>GPU mode</span>
+          <select id="select-gpu-mode">
+            <option value="auto">Auto (GPU if nvidia-smi works)</option>
+            <option value="on">Force GPU</option>
+            <option value="off">CPU only (no GPU compose override)</option>
+          </select>
+        </label>
+        <div class="row">
+          <button type="button" id="btn-compose-up">Compose up</button>
+          <button type="button" id="btn-compose-down" class="secondary">Compose down</button>
+          <button type="button" id="btn-compose-ps" class="secondary">Status (ps)</button>
+        </div>
+        <pre id="compose-out" class="preview small"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>GitHub token</h2>
+        <p class="hint">Stored in Windows Credential Manager or macOS Keychain.</p>
+        <label>
+          <span>Token (write-only field)</span>
+          <input type="password" id="input-token" autocomplete="off" placeholder="ghp_…" />
+        </label>
+        <div class="row">
+          <button type="button" id="btn-save-token">Save</button>
+          <button type="button" id="btn-clear-token" class="secondary">Clear</button>
+        </div>
+        <div id="token-status" class="status"></div>
+      </section>
+
+      <section class="panel wide">
+        <h2>Workers</h2>
+        <div id="workers-list" class="workers"></div>
+        <div class="row">
+          <button type="button" id="btn-add-worker">Add worker</button>
+          <button type="button" id="btn-save-workers">Save workers</button>
+        </div>
+        <p id="workers-msg" class="status"></p>
+      </section>
+
+      <section class="panel wide">
+        <h2>Prompt preview (rules + domain)</h2>
+        <label>
+          <span>Domain</span>
+          <input type="text" id="input-domain" value="git" />
+        </label>
+        <label>Optional guardrail overrides (JSON object, merged for preview only)
+          <textarea id="prompt-guardrails-override" rows="3" class="code" placeholder='{ "rateLimits": { "maxPullRequestsCreatedPerDay": 3 } }'></textarea>
+        </label>
+        <button type="button" id="btn-preview-prompt">Assemble preview</button>
+        <pre id="prompt-preview" class="preview"></pre>
+      </section>
+
+      <section class="panel wide">
+        <h2>GitHub audit (SQLite)</h2>
+        <p class="hint">
+          Stored at <code>audit.sqlite3</code> under app data. Use
+          <code>audit_record_github</code> from automation later; for now, rows appear when something records them.
+        </p>
+        <div class="row">
+          <button type="button" id="btn-audit-refresh">Refresh audit log</button>
+        </div>
+        <pre id="audit-out" class="preview small"></pre>
+      </section>
+
+      <section class="panel wide">
+        <h2>App log</h2>
+        <p class="hint">Recent Compose / worker actions from this session.</p>
+        <div class="row">
+          <button type="button" id="btn-app-log-refresh">Refresh</button>
+        </div>
+        <pre id="app-log" class="preview small"></pre>
+      </section>
+
+      <section class="panel">
+        <h2>Ollama models</h2>
+        <label>
+          <span>Host</span>
+          <input type="text" id="input-ollama" value="http://127.0.0.1:11434" />
+        </label>
+        <button type="button" id="btn-list-models">List tags</button>
+        <pre id="ollama-out" class="preview small"></pre>
+      </section>
+    </main>
+
+    <script type="module" src="./main.js"></script>
+  </body>
+</html>

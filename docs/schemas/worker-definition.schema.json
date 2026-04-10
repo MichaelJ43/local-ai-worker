@@ -1,0 +1,44 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-ai-worker.local/worker-definition.schema.json",
+  "title": "WorkerDefinition",
+  "type": "object",
+  "required": ["id", "name", "maintenanceDomain", "enabled", "tasks"],
+  "properties": {
+    "id": { "type": "string", "minLength": 1 },
+    "name": { "type": "string" },
+    "maintenanceDomain": { "type": "string" },
+    "modelOverride": { "type": ["string", "null"] },
+    "ollamaHost": { "type": ["string", "null"] },
+    "enabled": { "type": "boolean" },
+    "tasks": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["id", "title", "schedule"],
+        "properties": {
+          "id": { "type": "string" },
+          "title": { "type": "string" },
+          "schedule": {
+            "oneOf": [
+              { "type": "object", "required": ["kind"], "properties": { "kind": { "const": "oneShot" } } },
+              {
+                "type": "object",
+                "required": ["kind", "intervalSeconds"],
+                "properties": {
+                  "kind": { "const": "cadence" },
+                  "intervalSeconds": { "type": "integer", "minimum": 1 }
+                }
+              }
+            ]
+          }
+        }
+      }
+    },
+    "guardrailOverrides": {},
+    "contextPath": { "type": ["string", "null"] },
+    "longTermVolume": { "type": ["string", "null"] },
+    "dockerImage": { "type": ["string", "null"] }
+  },
+  "additionalProperties": false
+}

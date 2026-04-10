@@ -1,0 +1,29 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-ai-worker.local/rules-tree.schema.json",
+  "title": "RulesTree",
+  "type": "object",
+  "required": ["version", "domains"],
+  "properties": {
+    "version": { "type": "integer", "minimum": 1 },
+    "metadata": {},
+    "domains": {
+      "type": "object",
+      "additionalProperties": {
+        "type": "object",
+        "required": ["guardrails", "promptGuidelines"],
+        "properties": {
+          "label": { "type": "string" },
+          "enabled": { "type": "boolean" },
+          "guardrails": { "type": "object" },
+          "promptGuidelines": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": true
+      }
+    }
+  },
+  "additionalProperties": false
+}

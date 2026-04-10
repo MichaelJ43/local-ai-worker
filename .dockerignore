@@ -1,0 +1,9 @@
+target
+**/node_modules
+.git
+**/dist
+playwright-report
+test-results
+**/.env
+.env
+.env.*

@@ -1,0 +1,17 @@
+# Bundled with the app; copied to app data and run via `docker compose`.
+# Project name is set here so `up` / `down` / `ps` stay consistent.
+name: local-ai-ollama
+
+services:
+  ollama:
+    # Pin for reproducible installs; bump intentionally when upgrading. See https://hub.docker.com/r/ollama/ollama/tags
+    image: ollama/ollama:0.20.2
+    container_name: local-ai-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    restart: unless-stopped
+
+volumes:
+  ollama_data:

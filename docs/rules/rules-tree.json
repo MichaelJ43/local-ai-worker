@@ -1,0 +1,57 @@
+{
+  "version": 1,
+  "domains": {
+    "git": {
+      "label": "Git / GitHub maintenance",
+      "guardrails": {
+        "rateLimits": {
+          "maxPullRequestsCreatedPerDay": 10,
+          "maxGithubApiMutationsPerHour": 120,
+          "minSecondsBetweenGitPushes": 60
+        },
+        "scope": {
+          "enforceRepositoryAllowlist": false,
+          "allowedRepositories": [],
+          "deniedRepositories": []
+        },
+        "branchSafety": {
+          "protectedDefaultBranchNames": ["main", "master"],
+          "forbidForcePushToDefaultBranch": true,
+          "forbidDeleteRemoteBranch": true,
+          "forbidHistoryRewriteOnSharedBranches": true
+        },
+        "pullRequests": {
+          "maxOpenPullRequestsPerRepository": 5,
+          "maxFilesChangedPerPullRequest": 100,
+          "maxAdditionsDeletionsPerPullRequest": 8000,
+          "forbidMergeWithUnresolvedConflicts": true
+        },
+        "mergePolicy": {
+          "allowMergingPullRequests": true,
+          "requireCiSuccessBeforeMerge": true
+        },
+        "secretsAndLogs": {
+          "redactTokensInAuditAndAppLogs": true,
+          "forbidCommittingDotEnvOrKeys": true
+        },
+        "auditPolicy": {
+          "recordAllGithubMutations": true,
+          "recordGitCliFailures": true
+        }
+      },
+      "promptGuidelines": [
+        "Prefer small PRs with clear descriptions; one logical change per PR when possible.",
+        "Never embed tokens or secrets in commits, PR bodies, issues, or logs.",
+        "Use gh CLI or official GitHub API only.",
+        "Before merging: confirm branch freshness, CI success when required, and no conflicts.",
+        "If a guardrail blocks work, record why in context JSON and back off; do not bypass."
+      ]
+    },
+    "market": {
+      "label": "Market monitoring (stub)",
+      "enabled": false,
+      "guardrails": {},
+      "promptGuidelines": []
+    }
+  }
+}

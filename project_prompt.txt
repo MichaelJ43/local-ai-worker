@@ -1,0 +1,24 @@
+Guidelines:
+I want this to be a git enabled project
+This is a new project, all source code should be under ./src and all test code should be under ./test
+This should be a compiled application that can be launched as an executable, should have a windows and mac versions, create an installer that sets up necessary locations to store settings
+All supporting files should either be at the root or under appropriately named directories (ie. ./docs)
+I want comprehensive documentation, both on what the application does and how to use it
+I want Well written code that is maintainable and follows best practices
+I want Well written and comprehensive unit tests
+I want UI based tests
+I want Component tests that verify the application as a whole
+The language it is written in is not important, but I want it to be as fast as possible, so choose a language using that as a main criteria
+
+Process for Completing this:
+Phase 1: Plan the project
+Phase 2: Follow through on the plan, be sure to handle unit tests by following TDD
+Phase 3: Verify, run unit tests, run component tests, run any UI based tests
+Phase 4: Compile supplemental documentation and instructions
+Phase 5: Create the release pipeline, including versioning, test, and compile/release process, keep in mind the various platforms to support
+
+Project Details:
+This will be a ai agent worker manager.  The UI will allow me to configure 1 or more workers.  Each worker will have its own task list and output.  The tasks the workers will have are either 1 off tasks, or looped on a cadence.
+The goal is to use containerized ollama using the latest gemma4 model to automatically maintain projects or carry out tasks.
+I want the workers to have an "intelligent" context that evolves and adjusts on each request. It should maintain a context json file that is re-evaluated based on what it learns on each pass.
+The app should identify if there's an LLM capable gpu, determine it's capabilities and tie that into the model capacity that is chosen to run.  It should also consider total system memory and general computer capabilities.  But I should be able to override on a worker by worker basis.
