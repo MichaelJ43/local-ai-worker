@@ -1,5 +1,6 @@
 {
   "name": "local-ai-worker",
+  "version": "0.1.0",
   "private": true,
   "type": "module",
   "scripts": {
@@ -7,10 +8,14 @@
     "build": "vite build",
     "preview": "vite preview --port 4173 --strictPort",
     "tauri": "tauri",
+    "tauri:build": "node scripts/inject-updater-endpoint.mjs && tauri build",
+    "version:bump": "node scripts/bump-version.mjs",
     "test:e2e": "playwright test"
   },
   "dependencies": {
-    "@tauri-apps/api": "^2"
+    "@tauri-apps/api": "^2",
+    "@tauri-apps/plugin-process": "^2",
+    "@tauri-apps/plugin-updater": "^2"
   },
   "devDependencies": {
     "@playwright/test": "^1.49.0",

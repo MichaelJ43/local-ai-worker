@@ -6,35 +6,115 @@ on:
   pull_request:
     branches: [main, master]
 
+permissions:
+  contents: read
+
 jobs:
-  rust:
-    runs-on: ${{ matrix.os }}
-    strategy:
-      matrix:
-        os: [windows-latest, macos-14]
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      js: ${{ steps.filter.outputs.js }}
+      rust: ${{ steps.filter.outputs.rust }}
+      workflow: ${{ steps.filter.outputs.workflow }}
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-      - run: cargo test --workspace
-      - run: cargo clippy --workspace -- -D warnings
+      - uses: dorny/paths-filter@v3
+        id: filter
+        with:
+          filters: |
+            js:
+              - 'src/**'
+              - 'package.json'
+              - 'package-lock.json'
+              - 'vite.config.js'
+              - 'playwright.config.js'
+              - 'test/playwright/**'
+            rust:
+              - 'crates/**'
+              - 'src-tauri/**'
+              - 'Cargo.toml'
+              - 'Cargo.lock'
+              - 'test/**'
+            workflow:
+              - '.github/workflows/**'
 
   frontend:
+    needs: changes
+    if: needs.changes.outputs.js == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
       - run: npm ci
       - run: npm run build
 
-  playwright:
+  e2e:
+    needs: changes
+    if: needs.changes.outputs.js == 'true' || needs.changes.outputs.workflow == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
+          cache: npm
       - run: npm ci
       - run: npx playwright install --with-deps chromium
       - run: npm run test:e2e
+
+  rust:
+    needs: changes
+    if: needs.changes.outputs.rust == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ${{ matrix.os }}
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest, macos-14]
+    steps:
+      - uses: actions/checkout@v4
+      - name: Linux dependencies (Tauri link)
+        if: matrix.os == 'ubuntu-latest'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential pkg-config \
+            libglib2.0-dev \
+            libwebkit2gtk-4.1-dev \
+            libayatana-appindicator3-dev \
+            librsvg2-dev \
+            libssl-dev \
+            libxdo-dev \
+            patchelf curl wget file
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+      - run: cargo test --workspace
+      - run: cargo clippy --workspace -- -D warnings
+
+  ci-success:
+    name: CI success
+    needs: [changes, frontend, rust, e2e]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Verify jobs
+        env:
+          CHANGES: ${{ needs.changes.result }}
+          FRONTEND: ${{ needs.frontend.result }}
+          RUST: ${{ needs.rust.result }}
+          E2E: ${{ needs.e2e.result }}
+        run: |
+          echo "changes=$CHANGES frontend=$FRONTEND rust=$RUST e2e=$E2E"
+          if [ "$CHANGES" != "success" ]; then
+            echo "changes job did not succeed."
+            exit 1
+          fi
+          for r in "$FRONTEND" "$RUST" "$E2E"; do
+            if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
+              echo "A CI job failed or was cancelled."
+              exit 1
+            fi
+          done

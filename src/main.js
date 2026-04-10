@@ -1,4 +1,9 @@
 import { invoke } from "@tauri-apps/api/core";
+import {
+  fetchUpdateIfAvailable,
+  openReleasesPage,
+  startUpdateCheckScheduler,
+} from "./updater.js";
 
 async function refreshEnv() {
   const el = document.getElementById("env-status");
@@ -386,4 +391,31 @@ refreshAppLog().catch(() => {});
 refreshAudit().catch(() => {});
 loadWorkers().catch((e) => {
   document.getElementById("workers-msg").textContent = String(e);
+});
+
+try {
+  startUpdateCheckScheduler();
+} catch {
+  /* non-Tauri */
+}
+
+document.getElementById("btn-releases")?.addEventListener("click", () => {
+  openReleasesPage().catch((e) => console.warn(e));
+});
+
+document.getElementById("btn-check-updates")?.addEventListener("click", async () => {
+  try {
+    const u = await fetchUpdateIfAvailable();
+    if (!u) {
+      window.alert("You're on the latest version (or update server unreachable).");
+      return;
+    }
+    const ok = window.confirm(`Update available: ${u.version}. Install now?`);
+    if (!ok) return;
+    await u.downloadAndInstall();
+    const { relaunch } = await import("@tauri-apps/plugin-process");
+    await relaunch();
+  } catch (e) {
+    window.alert(String(e));
+  }
 });
