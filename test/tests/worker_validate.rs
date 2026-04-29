@@ -6,6 +6,7 @@ fn git_allowlist_enforced_empty_fails() {
         id: "a".into(),
         name: "n".into(),
         maintenance_domain: "git".into(),
+        escalation_path: vec![],
         model_override: None,
         ollama_host: None,
         enabled: true,

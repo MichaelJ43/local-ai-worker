@@ -5,6 +5,13 @@ test("home renders app title in shell", async ({ page }) => {
   await expect(page.locator(".brand strong")).toHaveText("Local AI Worker");
 });
 
+test("LLM sources view opens from nav", async ({ page }) => {
+  await page.goto("/");
+  await page.getByRole("button", { name: "LLM sources" }).click();
+  await expect(page.locator("#view-title")).toHaveText("LLM sources");
+  await expect(page.getByRole("button", { name: "Save LLM sources", exact: true })).toBeVisible();
+});
+
 test("workers view opens from nav and shows hybrid panel", async ({ page }) => {
   await page.goto("/");
   await page.getByRole("button", { name: "Workers" }).click();

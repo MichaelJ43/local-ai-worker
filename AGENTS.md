@@ -18,7 +18,7 @@ This file is the **primary onboarding document** for coding agents (and humans) 
 | UI | Vanilla HTML/CSS/JS, Vite 5, `@tauri-apps/api` v2 |
 | Shared logic | `ai_worker_core` crate (rules, context, audit, Ollama client, hardware, guard exec, worker config) |
 | Worker container | Docker image built from `docker/` (bash agent loop, git/gh guard wrappers) |
-| Persistence (app) | `workers.json`, `secret_keys.json`, `pending_restore_prompt.json`, `audit.sqlite3`, per-worker dirs under app data |
+| Persistence (app) | `workers.json`, **`llm_sources.json`** (Ollama + Cursor catalog for escalation tiers), `secret_keys.json`, `pending_restore_prompt.json`, `audit.sqlite3`, per-worker dirs under app data |
 | CI | GitHub Actions: path-filtered frontend build, Playwright e2e, Rust test + clippy (multi-OS) |
 
 ---
@@ -70,6 +70,7 @@ Typical contents:
 | File / dir | Role |
 |------------|------|
 | `workers.json` | Serialized `Vec<WorkerDefinition>` |
+| `llm_sources.json` | Serialized `Vec<LlmSourceDefinition>` (tagged **`ollama`** / **`cursor`**); worker **`escalationPath`** references source ids |
 | `secret_keys.json` | Index of secret **names** (values in OS keychain) |
 | `pending_restore_prompt.json` | Last-exit enabled snapshot for “Welcome back” UI |
 | `audit.sqlite3` | GitHub mutation audit log |
@@ -86,6 +87,7 @@ Typical contents:
 ### Worker definition (`WorkerDefinition`)
 
 - **`maintenanceDomain`** — Key into `rules-tree.json` `domains` (e.g. `git`). Drives guardrails + prompt section.
+- **`escalationPath`** — Ordered list of **`llm_sources.json`** tier ids for model resolution and hybrid escalation (must include at least one **Ollama** tier to enable Docker agents; Cursor-before-Ollama ordering is rejected).
 - **`tasks`** — Each has `schedule`: **`oneShot`** or **`cadence`** with **`intervalSeconds`** (see `docker/agent-loop.sh` for due logic).
 - **`envFromSecrets`** — Maps **secret key** (KV store name) → **container env var**. If `GITHUB_TOKEN` not mapped, legacy/`github_token` secret still injected when present.
 - **`hybridOptions`** — Optional host-side **bounded Ollama + Cursor SDK** escalation (see `crates/ai_worker_hybrid`, `cursor-agent-bridge/cli.mjs`). Uses keychain secret (default name `cursor_api_key`) for `CURSOR_API_KEY` when invoking Node.
@@ -110,7 +112,7 @@ Typical contents:
 ## Frontend (`src/`)
 
 - **`main.js`** — Navigation views, workers CRUD UI, hybrid escalation controls, secrets table, compose actions, modals (domain/tasks help, session restore), `invoke` wiring.
-- **`index.html`** — Shell: sidebar nav (Overview, Ollama stack, Workers, Secrets, Diagnostics).
+- **`index.html`** — Shell: sidebar nav (Overview, LLM sources, Workers, Secrets, Diagnostics).
 - **`styles.css`** — Layout and component styles.
 - **`updater.js`** — Update check scheduler + Tauri updater plugin.
 
@@ -122,7 +124,8 @@ Typical contents:
 
 Registered in **`src-tauri/src/lib.rs`** `generate_handler!`:
 
-- Workers: `get_workers`, `save_workers`, `worker_storage_prepare`, `worker_docker_start` / `stop` / `recreate` / `status` / `logs`
+- Workers: `get_workers`, `save_workers`, `delete_worker` (disabled workers only — tears down Docker/workspace), `worker_storage_prepare`, `worker_docker_start` / `stop` / `recreate` / `status` / `logs`
+- LLM catalog: `get_llm_sources`, `save_llm_sources` (persists **`llm_sources.json`** beside `workers.json`; migration merges legacy worker Ollama/Cursor hints)
 - Hybrid (host): `hybrid_bridge_status`, `hybrid_run_worker` (bounded local Ollama + `@cursor/sdk` via `cursor-agent-bridge`; requires Node on PATH + `npm ci` in `cursor-agent-bridge/`)
 - Secrets: `secret_keys_list`, `secret_set`, `secret_delete`, `github_token_configured`, `set_github_token`, `delete_github_token`
 - Environment: `docker_status`, `hardware_profile`, `ollama_list_models`, `ollama_stack_gpu_hint`, `ollama_stack_up` / `down` / `status`
@@ -164,7 +167,7 @@ CI path filters (`.github/workflows/ci.yml`): changes under `src/`, `playwright`
 
 | Change | Also update |
 |--------|-------------|
-| `WorkerDefinition` fields | `docs/schemas/worker-definition.schema.json`, `main.js` (`workerTemplate`, render, hybrid controls), `test/tests/*.rs` literals, `worker_docker` / agent-config materialization if needed |
+| `WorkerDefinition` / LLM catalog fields | `docs/schemas/worker-definition.schema.json`, `docs/schemas/llm-sources.schema.json`, `main.js` (`workerTemplate`, render, escalation + LLM sources UI), `test/tests/*.rs` literals, `worker_docker` / agent-config materialization if needed |
 | Rules domains / guardrails | `docs/rules/rules-tree.json`, `rules_domains_list` consumers, USER_GUIDE if user-visible |
 | Agent task schedule semantics | `docker/agent-loop.sh`, `worker_config` / schema, UI task editors |
 | New Tauri command | `lib.rs` handler list, frontend `invoke`, optionally `capabilities` if permissions change |

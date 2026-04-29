@@ -2,6 +2,7 @@
 
 mod compose;
 mod hybrid;
+mod persist_llm;
 mod secrets;
 mod worker_docker;
 
@@ -29,7 +30,7 @@ pub(crate) fn workers_path() -> PathBuf {
     app_dir().join("workers.json")
 }
 
-fn audit_db_path() -> PathBuf {
+pub(crate) fn audit_db_path() -> PathBuf {
     app_dir().join("audit.sqlite3")
 }
 
@@ -46,7 +47,7 @@ struct PendingRestoreFile {
 
 fn write_pending_restore_on_app_exit() {
     let _ = (|| -> Result<(), String> {
-        let workers = read_workers()?;
+        let workers = read_workers_disk_internal()?;
         let should_prompt = workers.iter().any(|w| w.enabled);
         let enabled_by_worker_id: HashMap<_, _> =
             workers.iter().map(|w| (w.id.clone(), w.enabled)).collect();
@@ -64,7 +65,9 @@ fn write_pending_restore_on_app_exit() {
     })();
 }
 
-pub(crate) fn read_workers() -> Result<Vec<WorkerDefinition>, String> {
+use ai_worker_core::llm_source::LlmSourceDefinition;
+
+pub(crate) fn read_workers_disk_internal() -> Result<Vec<WorkerDefinition>, String> {
     let p = workers_path();
     if !p.exists() {
         return Ok(vec![]);
@@ -73,7 +76,7 @@ pub(crate) fn read_workers() -> Result<Vec<WorkerDefinition>, String> {
     serde_json::from_str(&data).map_err(|e| e.to_string())
 }
 
-fn write_workers(workers: &[WorkerDefinition]) -> Result<(), String> {
+pub(crate) fn write_workers_disk(workers: &[WorkerDefinition]) -> Result<(), String> {
     for w in workers {
         w.validate()?;
     }
@@ -81,6 +84,13 @@ fn write_workers(workers: &[WorkerDefinition]) -> Result<(), String> {
     std::fs::create_dir_all(&dir).map_err(|e| e.to_string())?;
     let data = serde_json::to_string_pretty(workers).map_err(|e| e.to_string())?;
     std::fs::write(workers_path(), data).map_err(|e| e.to_string())
+}
+
+fn write_workers_with_llm(ws: &[WorkerDefinition], catalog: &[LlmSourceDefinition]) -> Result<(), String> {
+    for w in ws {
+        w.validate_with_llm_catalog(catalog)?;
+    }
+    write_workers_disk(ws)
 }
 
 fn rules_tree_cached() -> Result<RulesTree, String> {
@@ -105,16 +115,49 @@ fn push_app_log(buf: &AppLogBuffer, line: impl Into<String>) {
 
 #[tauri::command]
 fn get_workers() -> Result<Vec<WorkerDefinition>, String> {
-    read_workers()
+    persist_llm::ensure_migration()?;
+    read_workers_disk_internal()
 }
 
 #[tauri::command]
-fn save_workers(workers: Vec<WorkerDefinition>) -> Result<(), String> {
-    write_workers(&workers)
+fn get_llm_sources() -> Result<Vec<LlmSourceDefinition>, String> {
+    persist_llm::read_llm_sources()
+}
+
+#[tauri::command]
+fn save_llm_sources(sources: Vec<LlmSourceDefinition>) -> Result<(), String> {
+    persist_llm::ensure_migration()?;
+    persist_llm::write_llm_sources(&sources)
+}
+
+#[tauri::command]
+fn save_workers(workers: Vec<WorkerDefinition>, log: tauri::State<AppLogBuffer>) -> Result<(), String> {
+    persist_llm::ensure_migration()?;
+    let catalog = persist_llm::read_llm_sources_raw()?;
+    let prev = read_workers_disk_internal().unwrap_or_default();
+    write_workers_with_llm(&workers, &catalog)?;
+    persist_llm::apply_runtime_after_workers_save(log.inner(), &prev)?;
+    Ok(())
+}
+
+#[tauri::command]
+fn delete_worker(worker_id: String) -> Result<(), String> {
+    persist_llm::ensure_migration()?;
+    let catalog = persist_llm::read_llm_sources_raw()?;
+    let mut all = read_workers_disk_internal()?;
+    let idx = all
+        .iter()
+        .position(|x| x.id == worker_id)
+        .ok_or_else(|| format!("worker not found: {worker_id}"))?;
+    if all[idx].enabled {
+        return Err("disable the worker before deleting it".into());
+    }
+    let victim = all.remove(idx);
+    write_workers_with_llm(&all, &catalog)?;
+    worker_docker::worker_teardown_all(&app_dir(), &victim)
 }
 
 #[derive(Serialize)]
-#[serde(rename_all = "camelCase")]
 struct DockerStatus {
     available: bool,
     version: Option<String>,
@@ -259,18 +302,25 @@ fn worker_storage_prepare(
     worker_id: String,
     log: tauri::State<AppLogBuffer>,
 ) -> Result<WorkerStorageInfo, String> {
-    let mut workers = read_workers()?;
-    let w = workers
-        .iter_mut()
-        .find(|x| x.id == worker_id)
-        .ok_or_else(|| format!("worker not found: {worker_id}"))?;
-    worker_docker::prepare_worker_storage(&app_dir(), w)?;
+    persist_llm::ensure_migration()?;
+    let catalog = persist_llm::read_llm_sources_raw()?;
+    let mut workers = read_workers_disk_internal()?;
+    let (idx, ollama) = {
+        let wi = workers
+            .iter()
+            .position(|x| x.id == worker_id)
+            .ok_or_else(|| format!("worker not found: {worker_id}"))?;
+        let o =
+            persist_llm::resolve_worker_ollama_for_ops(&workers[wi], &catalog)?;
+        (wi, o)
+    };
+    worker_docker::prepare_worker_storage(&app_dir(), &mut workers[idx], &ollama)?;
     let info = WorkerStorageInfo {
-        context_path: w.context_path.clone().unwrap_or_default(),
-        long_term_volume: w.long_term_volume.clone().unwrap_or_default(),
+        context_path: workers[idx].context_path.clone().unwrap_or_default(),
+        long_term_volume: workers[idx].long_term_volume.clone().unwrap_or_default(),
         container_name: worker_docker::container_name_for_worker(&worker_id),
     };
-    write_workers(&workers)?;
+    write_workers_with_llm(&workers, &catalog)?;
     push_app_log(&log, format!("prepared storage for worker {worker_id}"));
     Ok(info)
 }
@@ -280,12 +330,15 @@ fn worker_docker_start(
     worker_id: String,
     log: tauri::State<AppLogBuffer>,
 ) -> Result<String, String> {
-    let workers = read_workers()?;
+    persist_llm::ensure_migration()?;
+    let catalog = persist_llm::read_llm_sources_raw()?;
+    let workers = read_workers_disk_internal()?;
     let w = workers
         .iter()
         .find(|x| x.id == worker_id)
         .ok_or_else(|| format!("worker not found: {worker_id}"))?;
-    let r = worker_docker::worker_start(&app_dir(), &audit_db_path(), w);
+    let oll = persist_llm::resolve_worker_ollama_for_ops(w, &catalog)?;
+    let r = worker_docker::worker_start(&app_dir(), &audit_db_path(), w, &oll);
     match &r {
         Ok(id) => push_app_log(&log, format!("worker {worker_id} start container {id}")),
         Err(e) => push_app_log(&log, format!("worker {worker_id} start ERR: {e}")),
@@ -311,12 +364,15 @@ fn worker_docker_recreate(
     worker_id: String,
     log: tauri::State<AppLogBuffer>,
 ) -> Result<String, String> {
-    let workers = read_workers()?;
+    persist_llm::ensure_migration()?;
+    let catalog = persist_llm::read_llm_sources_raw()?;
+    let workers = read_workers_disk_internal()?;
     let w = workers
         .iter()
         .find(|x| x.id == worker_id)
         .ok_or_else(|| format!("worker not found: {worker_id}"))?;
-    let r = worker_docker::worker_recreate(&app_dir(), &audit_db_path(), w);
+    let oll = persist_llm::resolve_worker_ollama_for_ops(w, &catalog)?;
+    let r = worker_docker::worker_recreate(&app_dir(), &audit_db_path(), w, &oll);
     match &r {
         Ok(s) => push_app_log(&log, format!("worker {worker_id} recreate: {s}")),
         Err(e) => push_app_log(&log, format!("worker {worker_id} recreate ERR: {e}")),
@@ -426,8 +482,27 @@ fn session_peek_pending_restore() -> Result<Option<PendingRestoreFile>, String> 
 }
 
 #[tauri::command]
-fn session_resolve_restore(choice: String) -> Result<(), String> {
-    let mut workers = read_workers()?;
+fn session_resolve_restore(
+    choice: String,
+    log: tauri::State<AppLogBuffer>,
+) -> Result<(), String> {
+    persist_llm::ensure_migration()?;
+    if choice == "dismiss" {
+        let cleared = PendingRestoreFile {
+            should_prompt: false,
+            enabled_by_worker_id: HashMap::new(),
+        };
+        std::fs::create_dir_all(app_dir()).map_err(|e| e.to_string())?;
+        std::fs::write(
+            pending_restore_path(),
+            serde_json::to_string_pretty(&cleared).map_err(|e| e.to_string())?,
+        )
+        .map_err(|e| e.to_string())?;
+        return Ok(());
+    }
+
+    let prev = read_workers_disk_internal().unwrap_or_default();
+    let mut workers = read_workers_disk_internal()?;
     let p = pending_restore_path();
     let snapshot: HashMap<String, bool> = if p.exists() {
         let data = std::fs::read_to_string(&p).map_err(|e| e.to_string())?;
@@ -450,11 +525,12 @@ fn session_resolve_restore(choice: String) -> Result<(), String> {
                 w.enabled = false;
             }
         }
-        "dismiss" => {}
         _ => return Err(format!("unknown session choice: {choice}")),
     }
 
-    write_workers(&workers)?;
+    let catalog = persist_llm::read_llm_sources_raw()?;
+    write_workers_with_llm(&workers, &catalog)?;
+    persist_llm::apply_runtime_after_workers_save(log.inner(), &prev)?;
 
     let cleared = PendingRestoreFile {
         should_prompt: false,
@@ -479,6 +555,9 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             get_workers,
             save_workers,
+            get_llm_sources,
+            save_llm_sources,
+            delete_worker,
             docker_status,
             hardware_profile,
             github_token_configured,

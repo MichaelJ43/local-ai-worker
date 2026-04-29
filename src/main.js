@@ -7,11 +7,22 @@ import {
 
 const VIEW_TITLES = {
   overview: "Overview",
-  stack: "Ollama stack",
+  llmSources: "LLM sources",
   workers: "Workers",
   secrets: "Secrets",
   diagnostics: "Diagnostics",
 };
+
+/** @type {Array<Record<string, unknown>>} */
+let llmSourcesCache = [];
+
+async function loadLlmSources() {
+  try {
+    llmSourcesCache = await invoke("get_llm_sources");
+  } catch {
+    llmSourcesCache = [];
+  }
+}
 
 /** @type {{ key: string, label: string, selectable: boolean }[]} */
 let domainsCache = [];
@@ -29,7 +40,13 @@ function showView(navId) {
 }
 
 document.querySelectorAll(".nav-item").forEach((btn) => {
-  btn.addEventListener("click", () => showView(btn.dataset.nav));
+  btn.addEventListener("click", async () => {
+    showView(btn.dataset.nav);
+    if (btn.dataset.nav === "llmSources") {
+      await loadLlmSources();
+      renderLlmSourcesEditor();
+    }
+  });
 });
 
 function openModal(el) {
@@ -137,9 +154,10 @@ function workerTemplate(id) {
     id,
     name: "Worker",
     maintenanceDomain: "git",
+    escalationPath: [],
     modelOverride: null,
     ollamaHost: null,
-    enabled: true,
+    enabled: false,
     tasks: [
       {
         id: crypto.randomUUID(),
@@ -161,6 +179,61 @@ function escapeAttr(s) {
     .replace(/&/g, "&amp;")
     .replace(/"/g, "&quot;")
     .replace(/</g, "&lt;");
+}
+
+function escalationOptionsHtml() {
+  let o =
+    '<option value="">— choose source —</option>';
+  for (const src of llmSourcesCache) {
+    const lbl =
+      src.kind === "cursor"
+        ? `Cursor • ${escapeAttr(String(src.cursorModelId || src.id))}`
+        : `Ollama • ${escapeAttr(String(src.defaultModel || src.baseUrl))}`;
+    o += `<option value="${escapeAttr(src.id)}">${lbl}</option>`;
+  }
+  return o;
+}
+
+function escalationRowsHtml(w) {
+  if (!Array.isArray(w.escalationPath)) w.escalationPath = [];
+
+  const tiers =
+    w.escalationPath.length === 0 ? [""] : w.escalationPath.slice();
+
+  const rows = tiers
+      .map(
+        (sid, ix) =>
+          `<div class="escalation-row row tight" data-wid="${escapeAttr(w.id)}" data-esc-idx="${ix}">
+      <select data-field="tier" data-wid="${escapeAttr(w.id)}" data-esc-idx="${ix}">
+        ${tierSelectOptionsHtml(sid || "")}
+      </select>
+      <button type="button" class="secondary small-pad" data-action="escal-up" data-wid="${escapeAttr(w.id)}" data-esc-idx="${ix}" ${ix === 0 ? "disabled" : ""}>↑</button>
+      <button type="button" class="secondary small-pad" data-action="escal-down" data-wid="${escapeAttr(w.id)}" data-esc-idx="${ix}" ${ix === tiers.length - 1 ? "disabled" : ""}>↓</button>
+      <button type="button" class="linkish" data-action="escal-remove" data-wid="${escapeAttr(w.id)}" data-esc-idx="${ix}">remove</button>
+    </div>`,
+      )
+      .join("");
+
+  return `<div class="escal-block" data-wid="${escapeAttr(w.id)}">
+    <div class="task-label">Escalation path (ordered tiers)</div>
+    ${rows}
+    <button type="button" data-action="escal-add" data-wid="${escapeAttr(w.id)}">+ Add tier</button>
+    <p class="hint">Include at least one <strong>Ollama</strong> tier to run the Docker agent; add <strong>Cursor</strong> for hybrid escalation.</p>
+  </div>`;
+}
+
+function tierSelectOptionsHtml(selectedId) {
+  let o =
+    '<option value="">— choose source —</option>';
+  for (const src of llmSourcesCache) {
+    const sel = selectedId === src.id ? ' selected=""' : "";
+    const lbl =
+      src.kind === "cursor"
+        ? `Cursor • ${escapeAttr(String(src.cursorModelId || src.id))}`
+        : `Ollama • ${escapeAttr(String(src.defaultModel || src.baseUrl))}`;
+    o += `<option value="${escapeAttr(src.id)}"${sel}>${lbl}</option>`;
+  }
+  return o;
 }
 
 function escapeTextarea(s) {
@@ -232,6 +305,7 @@ async function persistAndRunHybrid(workerId, skipLocalAttempts) {
     ?.querySelector(`pre.worker-hybrid-out[data-wid="${workerId}"]`);
   msg.textContent = "Saving workers…";
   try {
+    await loadLlmSources();
     await invoke("save_workers", { workers: workersCache });
     msg.textContent = "Running hybrid pipeline…";
     const res = await invoke("hybrid_run_worker", {
@@ -370,9 +444,10 @@ function renderWorkers(workers) {
       ${isDraft ? `<div class="row"><button type="button" class="secondary" data-action="worker-discard" data-wid="${escapeAttr(w.id)}">Discard new worker</button></div>` : ""}
       <label>Name <input data-k="name" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.name)}" /></label>
       ${domainSelectHtml(w)}
-      <label>Model override <input data-k="modelOverride" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.modelOverride || "")}" placeholder="gemma4:e2b" /></label>
+      ${escalationRowsHtml(w)}
       <label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.dockerImage || "")}" placeholder="local-ai-worker-agent:latest" /></label>
       <label class="enable-row"><input data-k="enabled" data-wid="${escapeAttr(w.id)}" type="checkbox" ${w.enabled ? "checked" : ""} /> Worker enabled</label>
+      <p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>
       <label>Guardrail overrides (JSON object, merged into domain guardrails)
         <textarea data-field="guardrails" data-wid="${escapeAttr(w.id)}" rows="5" class="code">${escapeTextarea(gr)}</textarea>
       </label>
@@ -398,26 +473,19 @@ function renderWorkers(workers) {
         Volume: ${w.longTermVolume ? escapeAttr(w.longTermVolume) : "—"}
       </div>
       <div class="hybrid-block" data-testid="worker-hybrid-section">
-        <div class="task-label">Hybrid: Ollama + Cursor SDK</div>
+        <div class="task-label">Hybrid escalation (manual run)</div>
         <p class="hint">
-          Bounded local Ollama attempts, then escalate with Cursor’s coding agent (<code>@cursor/sdk</code> via Node).
-          Add a Cursor API secret (default key <code>cursor_api_key</code>) unless you rename it below.
-          Run <strong>Prepare storage</strong> first so context exists, then <strong>Save workers</strong> before escalating.
+          Bounded Ollama (from escalation path) → Cursor tier. Configure Cursor + repo here; API keys remain in Secrets /
+          Cursor LLM sources. Requires Node plus <code>cursor-agent-bridge</code> deps.
         </p>
-        <label>Cursor secret key name
-          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="cursorSecretKey" value="${escapeAttr(ho.cursorSecretKey ?? "")}" placeholder="cursor_api_key" list="secret-keys-datalist" />
-        </label>
-        <label>Repo URL (optional, for Cursor cloud escalation)
+        <label>Repo URL (optional, Cursor cloud escalation)
           <input type="text" data-wid="${escapeAttr(w.id)}" data-part="repoUrl" value="${escapeAttr(ho.repoUrl ?? "")}" placeholder="https://github.com/org/repo.git" />
         </label>
         <label class="inline tight"><span>Starting ref</span>
           <input type="text" data-wid="${escapeAttr(w.id)}" data-part="startingRef" value="${escapeAttr(ho.startingRef ?? "")}" placeholder="main" />
         </label>
-        <label>Workspace path override (optional; defaults to directory above context JSON)
+        <label>Workspace path override (optional; defaults above context JSON dir)
           <input type="text" data-wid="${escapeAttr(w.id)}" data-part="workspacePath" value="${escapeAttr(ho.workspacePath ?? "")}" />
-        </label>
-        <label class="inline tight"><span>Cursor model id</span>
-          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="cursorModelId" value="${escapeAttr(ho.cursorModelId ?? "")}" placeholder="composer-2 (optional)" />
         </label>
         <label class="inline tight"><span>Local phase timeout (ms)</span>
           <input type="number" min="1000" step="500" data-wid="${escapeAttr(w.id)}" data-part="localPhaseTimeoutMs" value="${ho.localPhaseTimeoutMs != null ? escapeAttr(String(ho.localPhaseTimeoutMs)) : ""}" placeholder="120000" />
@@ -434,29 +502,19 @@ function renderWorkers(workers) {
         </div>
         <pre class="worker-hybrid-out preview small" data-hybrid-out data-wid="${escapeAttr(w.id)}"></pre>
       </div>
-      <div class="docker-steps">
-        <div class="docker-step">
-          <span class="step-num">1</span>
-          <div class="docker-step-body">
-            <strong>Prepare storage</strong>
-            <p class="hint">Run this first for a new worker: creates the context file, Docker volume, and agent files on disk.</p>
-            <button type="button" data-docker="prepare" data-wid="${escapeAttr(w.id)}">Prepare storage</button>
-          </div>
+      <div class="docker-tools">
+        <div class="task-label">Docker (advanced)</div>
+        <p class="hint muted">Save workers performs prepare/start or stop automatically. Buttons below bypass that for troubleshooting.</p>
+        <div class="row wrap">
+          <button type="button" data-docker="prepare" data-wid="${escapeAttr(w.id)}" class="secondary">Prepare storage</button>
+          <button type="button" data-docker="start" data-wid="${escapeAttr(w.id)}" class="secondary">Force start</button>
+          <button type="button" data-docker="stop" data-wid="${escapeAttr(w.id)}" class="secondary">Force stop</button>
+          <button type="button" data-docker="status" data-wid="${escapeAttr(w.id)}">Status</button>
+          <button type="button" data-docker="logs" data-wid="${escapeAttr(w.id)}" class="secondary">Logs</button>
         </div>
-        <div class="docker-step">
-          <span class="step-num">2</span>
-          <div class="docker-step-body">
-            <strong>Start container</strong>
-            <p class="hint">After step 1, start (or restart) the agent container. Use this after reboots too; it does not replace Prepare.</p>
-            <div class="row wrap">
-              <button type="button" data-docker="start" data-wid="${escapeAttr(w.id)}">Start container</button>
-              <button type="button" data-docker="stop" data-wid="${escapeAttr(w.id)}" class="secondary">Stop</button>
-              <button type="button" data-docker="recreate" data-wid="${escapeAttr(w.id)}" class="secondary">Recreate</button>
-              <button type="button" data-docker="status" data-wid="${escapeAttr(w.id)}" class="secondary">Status</button>
-              <button type="button" data-docker="logs" data-wid="${escapeAttr(w.id)}" class="secondary">Logs</button>
-            </div>
-          </div>
-        </div>
+      </div>
+      <div class="row wrap">
+        <button type="button" class="secondary" data-action="worker-delete" data-wid="${escapeAttr(w.id)}" ${w.enabled ? 'disabled="" title="Disable first"' : ""}>Delete worker</button>
       </div>
       <pre class="worker-docker-out preview small" data-wid="${escapeAttr(w.id)}"></pre>
     `;
@@ -470,8 +528,6 @@ function renderWorkers(workers) {
       if (i < 0) return;
       const k = inp.dataset.k;
       if (k === "enabled") workersCache[i].enabled = inp.checked;
-      else if (k === "modelOverride")
-        workersCache[i].modelOverride = inp.value.trim() || null;
       else if (k === "dockerImage")
         workersCache[i].dockerImage = inp.value.trim() || null;
       else workersCache[i][k] = inp.value;
@@ -502,11 +558,116 @@ function renderWorkers(workers) {
 let workersCache = [];
 
 async function loadWorkers() {
+  await loadLlmSources();
   workersCache = await invoke("get_workers");
+  workersCache.forEach((w) => {
+    if (!Array.isArray(w.escalationPath)) w.escalationPath = [];
+  });
   workersCache.forEach(ensureEnvBindings);
   workersCache.forEach(ensureHybridOptions);
   renderWorkers(workersCache);
 }
+
+function renderLlmSourcesEditor() {
+  const el = document.getElementById("llm-sources-editor");
+  if (!el) return;
+  if (llmSourcesCache.length === 0) {
+    el.innerHTML =
+      '<p class="hint">No sources yet — add an Ollama endpoint and (optionally) a Cursor source.</p>';
+    return;
+  }
+  el.innerHTML = llmSourcesCache
+    .map((src, i) => {
+      if (src.kind === "ollama") {
+        return `<div class="panel tight llm-src-card" data-kind="ollama" data-index="${i}">
+          <div class="row spaced"><strong>Ollama source</strong><button type="button" class="secondary small-pad" data-remove-llm="${i}">Remove</button></div>
+          <label>Name <input type="text" data-llm-kind="ollama" data-part="name" data-index="${i}" value="${escapeAttr(src.name || "")}" /></label>
+          <label>Base URL <input type="text" data-part="baseUrl" data-index="${i}" value="${escapeAttr(src.baseUrl || "")}" /></label>
+          <label>Default model <input type="text" data-part="defaultModel" data-index="${i}" value="${escapeAttr(src.defaultModel || "")}" /></label>
+        </div>`;
+      }
+      if (src.kind === "cursor") {
+        return `<div class="panel tight llm-src-card" data-kind="cursor" data-index="${i}" data-testid="llm-cursor-source-card">
+          <div class="row spaced"><strong>Cursor source</strong><button type="button" class="secondary small-pad" data-remove-llm="${i}">Remove</button></div>
+          <label>Name <input type="text" data-part="name" data-index="${i}" value="${escapeAttr(src.name || "")}" /></label>
+          <label>Cursor model id <input type="text" data-part="cursorModelId" data-index="${i}" value="${escapeAttr(src.cursorModelId || "")}" placeholder="composer-2" /></label>
+          <label>Secret key name (keychain)<input type="text" data-part="secretKeyName" data-index="${i}" list="secret-keys-datalist" value="${escapeAttr(src.secretKeyName || "cursor_api_key")}" /></label>
+          <label>New API key value (optional; stored in OS keychain on Save)
+            <input type="password" data-part="newSecretValue" data-index="${i}" autocomplete="off" placeholder="••••••••" />
+          </label>
+          <p class="hint">After saving, this field is cleared — the raw key is never persisted in JSON.</p>
+        </div>`;
+      }
+      return "";
+    })
+    .join("");
+}
+
+document.getElementById("btn-llm-add-ollama")?.addEventListener("click", () => {
+  llmSourcesCache.push({
+    kind: "ollama",
+    id: crypto.randomUUID(),
+    name: "Local Ollama",
+    baseUrl: "http://127.0.0.1:11434",
+    defaultModel: "gemma3:latest",
+  });
+  renderLlmSourcesEditor();
+});
+
+document.getElementById("btn-llm-add-cursor")?.addEventListener("click", () => {
+  llmSourcesCache.push({
+    kind: "cursor",
+    id: crypto.randomUUID(),
+    name: "Cursor",
+    cursorModelId: "",
+    secretKeyName: "cursor_api_key",
+  });
+  renderLlmSourcesEditor();
+});
+
+document.getElementById("llm-sources-editor")?.addEventListener("input", (ev) => {
+  const inp = ev.target.closest("[data-part][data-index]");
+  if (!inp) return;
+  const ix = Number(inp.dataset.index);
+  const part = inp.dataset.part;
+  const s = llmSourcesCache[ix];
+  if (!s || !part || part === "newSecretValue") return;
+  s[part] = inp.value;
+});
+
+document.getElementById("llm-sources-editor")?.addEventListener("click", (ev) => {
+  const rm = ev.target.closest("[data-remove-llm]");
+  if (!rm) return;
+  const ix = Number(rm.getAttribute("data-remove-llm"));
+  if (!Number.isFinite(ix)) return;
+  llmSourcesCache.splice(ix, 1);
+  renderLlmSourcesEditor();
+});
+
+document.getElementById("btn-llm-sources-save")?.addEventListener("click", async () => {
+  const msg = document.getElementById("llm-sources-msg");
+  try {
+    msg.textContent = "Saving…";
+    /** persist any new Cursor keys */
+    for (let i = 0; i < llmSourcesCache.length; i++) {
+      const s = llmSourcesCache[i];
+      if (s.kind !== "cursor") continue;
+      const pw = document.querySelector(`input[data-part="newSecretValue"][data-index="${i}"]`);
+      if (pw && pw.value.trim()) {
+        const key = s.secretKeyName?.trim() || "cursor_api_key";
+        await invoke("secret_set", { key, value: pw.value });
+        pw.value = "";
+      }
+    }
+    await invoke("save_llm_sources", { sources: llmSourcesCache });
+    msg.textContent = "Saved LLM sources.";
+    await loadLlmSources();
+    renderLlmSourcesEditor();
+    await loadWorkers();
+  } catch (e) {
+    msg.textContent = String(e);
+  }
+});
 
 document.getElementById("workers-list").addEventListener("change", (e) => {
   const hb = e.target.closest(".hybrid-block [data-part]");
@@ -519,6 +680,21 @@ document.getElementById("workers-list").addEventListener("change", (e) => {
       } else {
         upsertHybridField(wid, part, hb.value);
       }
+    }
+    return;
+  }
+
+  const tierSel = e.target.closest("select[data-field='tier']");
+  if (tierSel) {
+    const wid = tierSel.dataset.wid;
+    const ix = Number(tierSel.dataset.escIdx);
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      if (!Array.isArray(workersCache[i].escalationPath)) workersCache[i].escalationPath = [];
+      while (workersCache[i].escalationPath.length <= ix) {
+        workersCache[i].escalationPath.push("");
+      }
+      workersCache[i].escalationPath[ix] = tierSel.value;
     }
     return;
   }
@@ -636,6 +812,77 @@ document.getElementById("workers-list").addEventListener("click", async (e) => {
   const hy2 = t.closest("[data-action='hybrid-cursor-only']");
   if (hy2) {
     await persistAndRunHybrid(hy2.dataset.wid, true);
+    return;
+  }
+
+  const wdel = t.closest("[data-action='worker-delete']");
+  if (wdel && !wdel.disabled) {
+    const wid = wdel.dataset.wid;
+    if (
+      !window.confirm(
+        "Delete this worker? Its Docker workspace and volumes are removed. Disabled workers only.",
+      )
+    )
+      return;
+    const msg = document.getElementById("workers-msg");
+    try {
+      await invoke("delete_worker", { workerId: wid });
+      draftWorkerIds.delete(wid);
+      await loadWorkers();
+      if (msg) msg.textContent = "Worker deleted.";
+    } catch (err) {
+      if (msg) msg.textContent = String(err);
+    }
+    return;
+  }
+
+  const eaddTier = t.closest("[data-action='escal-add']");
+  if (eaddTier) {
+    const wid = eaddTier.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      if (!Array.isArray(workersCache[i].escalationPath)) workersCache[i].escalationPath = [];
+      workersCache[i].escalationPath.push("");
+      renderWorkers(workersCache);
+    }
+    return;
+  }
+
+  const erem = t.closest("[data-action='escal-remove']");
+  if (erem) {
+    const wid = erem.dataset.wid;
+    const ix = Number(erem.dataset.escIdx);
+    const i = findWorkerIndex(wid);
+    if (i >= 0 && workersCache[i].escalationPath) {
+      workersCache[i].escalationPath.splice(ix, 1);
+      renderWorkers(workersCache);
+    }
+    return;
+  }
+
+  const eup = t.closest("[data-action='escal-up']");
+  if (eup && !eup.disabled) {
+    const wid = eup.dataset.wid;
+    const ix = Number(eup.dataset.escIdx);
+    const i = findWorkerIndex(wid);
+    const ep = workersCache[i]?.escalationPath;
+    if (i >= 0 && ep && ix > 0) {
+      [ep[ix - 1], ep[ix]] = [ep[ix], ep[ix - 1]];
+      renderWorkers(workersCache);
+    }
+    return;
+  }
+
+  const edn = t.closest("[data-action='escal-down']");
+  if (edn && !edn.disabled) {
+    const wid = edn.dataset.wid;
+    const ix = Number(edn.dataset.escIdx);
+    const i = findWorkerIndex(wid);
+    const ep = workersCache[i]?.escalationPath;
+    if (i >= 0 && ep && ix < ep.length - 1) {
+      [ep[ix], ep[ix + 1]] = [ep[ix + 1], ep[ix]];
+      renderWorkers(workersCache);
+    }
     return;
   }
 
@@ -823,6 +1070,7 @@ document.getElementById("btn-add-worker").addEventListener("click", () => {
 document.getElementById("btn-save-workers").addEventListener("click", async () => {
   const msg = document.getElementById("workers-msg");
   try {
+    msg.textContent = "Saving and applying runtime…";
     await invoke("save_workers", { workers: workersCache });
     msg.textContent = "Saved.";
     draftWorkerIds.clear();
@@ -894,6 +1142,7 @@ async function boot() {
   });
   try {
     await loadWorkers();
+    renderLlmSourcesEditor();
   } catch (e) {
     document.getElementById("workers-msg").textContent = String(e);
   }

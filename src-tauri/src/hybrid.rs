@@ -1,5 +1,6 @@
 //! Host-side bounded Ollama attempts + Cursor `@cursor/sdk` bridge (Node).
 
+use ai_worker_core::llm_source::LlmSourceDefinition;
 use ai_worker_core::ollama::OllamaClient;
 use ai_worker_core::worker_config::WorkerDefinition;
 use ai_worker_hybrid::verifier::AlwaysFailVerifier;
@@ -130,11 +131,13 @@ pub async fn hybrid_run_worker(
     app_log: State<'_, AppLogBuffer>,
     payload: HybridRunInputPayload,
 ) -> Result<HybridRunEnvelope, String> {
-    let workers = crate::read_workers()?;
+    let workers = crate::read_workers_disk_internal()?;
     let w = workers
         .into_iter()
         .find(|x| x.id == payload.worker_id)
         .ok_or_else(|| format!("worker id not found: {}", payload.worker_id))?;
+
+    let sources = crate::persist_llm::read_llm_sources_raw()?;
 
     let hybrid = w.hybrid_options.clone().unwrap_or_default();
 
@@ -150,10 +153,30 @@ pub async fn hybrid_run_worker(
         ));
     }
 
-    let secret_key = hybrid
-        .cursor_secret_key
-        .clone()
-        .unwrap_or_else(|| "cursor_api_key".into());
+    let mut first_cursor: Option<&LlmSourceDefinition> = None;
+    for tid in &w.escalation_path {
+        if let Some(s) = ai_worker_core::llm_source::source_by_id(&sources, tid) {
+            if matches!(s, LlmSourceDefinition::Cursor { .. }) {
+                first_cursor = Some(s);
+                break;
+            }
+        }
+    }
+
+    let (secret_key, cursor_model_for_bridge) = match first_cursor {
+        Some(LlmSourceDefinition::Cursor {
+            secret_key_name,
+            cursor_model_id,
+            ..
+        }) => (secret_key_name.clone(), cursor_model_id.clone()),
+        _ => {
+            return Err(
+                "Configure a Cursor LLM source in escalation path (LLM sources page) for hybrid escalation."
+                    .into(),
+            );
+        }
+    };
+
     secrets::validate_secret_key(&secret_key)?;
 
     let api_key_value = crate::secrets::resolve_secret_value(&secret_key)
@@ -169,23 +192,21 @@ pub async fn hybrid_run_worker(
 
     hybrid_log(&app_log, format!("run worker {} hybrid escalate", w.id));
 
-    let ollama_base = w
-        .ollama_host
-        .clone()
-        .unwrap_or_else(|| "http://127.0.0.1:11434".into());
-    let model = w
-        .model_override
-        .as_ref()
-        .map(|s| s.trim())
-        .filter(|s| !s.is_empty())
-        .map(|x| x.to_string())
-        .unwrap_or_else(|| "gemma3:latest".into());
+    let resolved = crate::persist_llm::resolve_worker_ollama_for_ops(&w, &sources)?;
+    let ollama_base = resolved.host_ollama_base_url.clone();
+    let model = resolved.model_for_agent_config.clone();
 
-    let skip_local_attempts = payload.skip_local_attempts;
+    let has_ollama_tier = w.escalation_path.iter().any(|id| {
+        ai_worker_core::llm_source::source_by_id(&sources, id)
+            .is_some_and(|s| matches!(s, LlmSourceDefinition::Ollama { .. }))
+    });
+
+    let skip_local_attempts =
+        payload.skip_local_attempts || !has_ollama_tier;
 
     let (transcript_lines, verification_logs_vec, local_succeeded) =
         if skip_local_attempts {
-            hybrid_log(&app_log, "skipped local bounded Ollama phase (requested)");
+            hybrid_log(&app_log, "skipped local bounded Ollama phase (no Ollama tier or requested)");
             (
                 vec!["(local Ollama phase skipped)".into()],
                 vec!["local phase skipped".into()],
@@ -249,7 +270,7 @@ pub async fn hybrid_run_worker(
 
     let bridged = build_bridge_payload(
         mode_cloud,
-        hybrid.cursor_model_id.clone(),
+        Some(cursor_model_for_bridge.clone()),
         prompt_text.clone(),
         &workspace_abs,
         if mode_cloud {
