@@ -1,0 +1,12 @@
+{
+  "name": "@local-ai-worker/cursor-agent-bridge",
+  "private": true,
+  "type": "module",
+  "version": "1.0.0",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@cursor/sdk": "1.0.9"
+  }
+}

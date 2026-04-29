@@ -98,7 +98,9 @@
               <p class="hint">
                 Map named secrets to container environment variables in each worker card. Empty mapping still
                 forwards <code>GITHUB_TOKEN</code> when a GitHub token secret exists. For a <strong>new</strong> worker,
-                run <strong>Prepare storage</strong> once, then <strong>Start container</strong>. Click
+                run <strong>Prepare storage</strong> once, then <strong>Start container</strong>. Optionally use
+                <strong>Hybrid</strong> to run bounded Ollama attempts and escalate via Cursor SDK (requires Node
+                plus <code>cursor-agent-bridge</code> dependencies). Click
                 <strong>Save workers</strong> before quitting so enabled flags persist (used for the reopen reminder).
               </p>
               <div id="workers-list" class="workers"></div>
@@ -116,6 +118,8 @@
               <p class="hint">
                 Names are stored in app data; values live in the OS credential store (Windows Credential
                 Manager / macOS Keychain). Use letters, digits, and underscores; start with a letter.
+                Hybrid escalation to Cursor uses a Cursor API token from Cursor Dashboard → Integrations;
+                suggested key name <code>cursor_api_key</code>.
               </p>
               <div class="secret-add row wrap">
                 <label class="inline tight">

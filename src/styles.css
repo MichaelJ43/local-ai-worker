@@ -318,6 +318,17 @@ code.wid {
   border-top: 1px solid #2a3142;
 }
 
+.hybrid-block {
+  margin: 0.65rem 0;
+  padding: 0.5rem 0.25rem;
+  border-top: 1px dashed #394055;
+}
+
+.hybrid-block label {
+  display: block;
+  margin-bottom: 0.4rem;
+}
+
 .task-label {
   font-size: 0.8rem;
   color: #9aa0b4;

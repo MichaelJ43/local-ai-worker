@@ -31,6 +31,7 @@ jobs:
               - 'test/playwright/**'
             rust:
               - 'crates/**'
+              - 'cursor-agent-bridge/**'
               - 'src-tauri/**'
               - 'Cargo.toml'
               - 'Cargo.lock'
@@ -87,8 +88,11 @@ jobs:
             libssl-dev \
             libxdo-dev \
             patchelf curl wget file
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci --prefix cursor-agent-bridge
       - uses: dtolnay/rust-toolchain@stable
-      - uses: swatinem/rust-cache@v2
         with:
           workspaces: src-tauri
       - run: cargo test --workspace

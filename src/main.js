@@ -152,6 +152,7 @@ function workerTemplate(id) {
     longTermVolume: null,
     dockerImage: null,
     envFromSecrets: [],
+    hybridOptions: null,
   };
 }
 
@@ -174,6 +175,76 @@ function findWorkerIndex(wid) {
 
 function ensureEnvBindings(w) {
   if (!Array.isArray(w.envFromSecrets)) w.envFromSecrets = [];
+}
+
+/** Default hybrid options mirror Rust `HybridOptions`. */
+function defaultHybridOptions() {
+  return {
+    cursorSecretKey: null,
+    repoUrl: null,
+    startingRef: null,
+    workspacePath: null,
+    allowCloudEscalation: true,
+    localPhaseTimeoutMs: null,
+    localMaxAttempts: null,
+    cursorModelId: null,
+  };
+}
+
+/** Ensure `hybridOptions` exists for editor + save payloads. */
+function ensureHybridOptions(w) {
+  if (!w.hybridOptions || typeof w.hybridOptions !== "object") {
+    w.hybridOptions = defaultHybridOptions();
+    return;
+  }
+  const d = defaultHybridOptions();
+  for (const k of Object.keys(d)) {
+    if (w.hybridOptions[k] === undefined) w.hybridOptions[k] = d[k];
+  }
+}
+
+function upsertHybridField(wid, part, raw) {
+  const i = findWorkerIndex(wid);
+  if (i < 0) return;
+  ensureHybridOptions(workersCache[i]);
+  const numeric = ["localPhaseTimeoutMs", "localMaxAttempts"];
+  if (part === "allowCloudEscalation") {
+    workersCache[i].hybridOptions[part] = !!raw;
+  } else if (numeric.includes(part)) {
+    const t = typeof raw === "number" ? String(raw) : String(raw ?? "").trim();
+    if (t === "") {
+      workersCache[i].hybridOptions[part] = null;
+    } else {
+      const n = Number(t);
+      workersCache[i].hybridOptions[part] =
+        Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
+    }
+  } else {
+    const s = typeof raw === "string" ? raw.trim() : String(raw ?? "");
+    workersCache[i].hybridOptions[part] = s === "" ? null : s;
+  }
+}
+
+async function persistAndRunHybrid(workerId, skipLocalAttempts) {
+  const msg = document.getElementById("workers-msg");
+  const outEl = document
+    .getElementById("workers-list")
+    ?.querySelector(`pre.worker-hybrid-out[data-wid="${workerId}"]`);
+  msg.textContent = "Saving workers…";
+  try {
+    await invoke("save_workers", { workers: workersCache });
+    msg.textContent = "Running hybrid pipeline…";
+    const res = await invoke("hybrid_run_worker", {
+      workerId,
+      skipLocalAttempts,
+    });
+    msg.textContent = res.ok ? "Hybrid run finished (see preview below)." : "Hybrid run returned ok=false.";
+    if (outEl) outEl.textContent = JSON.stringify(res, null, 2);
+    await refreshAppLog();
+  } catch (err) {
+    msg.textContent = String(err);
+    if (outEl) outEl.textContent = String(err);
+  }
 }
 
 function domainSelectHtml(w) {
@@ -246,6 +317,8 @@ function renderWorkers(workers) {
   root.innerHTML = "";
   workers.forEach((w) => {
     ensureEnvBindings(w);
+    ensureHybridOptions(w);
+    const ho = w.hybridOptions;
     const gr =
       w.guardrailOverrides != null
         ? JSON.stringify(w.guardrailOverrides, null, 2)
@@ -324,6 +397,43 @@ function renderWorkers(workers) {
         Context: ${w.contextPath ? escapeAttr(w.contextPath) : "— (run Prepare)"}<br/>
         Volume: ${w.longTermVolume ? escapeAttr(w.longTermVolume) : "—"}
       </div>
+      <div class="hybrid-block" data-testid="worker-hybrid-section">
+        <div class="task-label">Hybrid: Ollama + Cursor SDK</div>
+        <p class="hint">
+          Bounded local Ollama attempts, then escalate with Cursor’s coding agent (<code>@cursor/sdk</code> via Node).
+          Add a Cursor API secret (default key <code>cursor_api_key</code>) unless you rename it below.
+          Run <strong>Prepare storage</strong> first so context exists, then <strong>Save workers</strong> before escalating.
+        </p>
+        <label>Cursor secret key name
+          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="cursorSecretKey" value="${escapeAttr(ho.cursorSecretKey ?? "")}" placeholder="cursor_api_key" list="secret-keys-datalist" />
+        </label>
+        <label>Repo URL (optional, for Cursor cloud escalation)
+          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="repoUrl" value="${escapeAttr(ho.repoUrl ?? "")}" placeholder="https://github.com/org/repo.git" />
+        </label>
+        <label class="inline tight"><span>Starting ref</span>
+          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="startingRef" value="${escapeAttr(ho.startingRef ?? "")}" placeholder="main" />
+        </label>
+        <label>Workspace path override (optional; defaults to directory above context JSON)
+          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="workspacePath" value="${escapeAttr(ho.workspacePath ?? "")}" />
+        </label>
+        <label class="inline tight"><span>Cursor model id</span>
+          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="cursorModelId" value="${escapeAttr(ho.cursorModelId ?? "")}" placeholder="composer-2 (optional)" />
+        </label>
+        <label class="inline tight"><span>Local phase timeout (ms)</span>
+          <input type="number" min="1000" step="500" data-wid="${escapeAttr(w.id)}" data-part="localPhaseTimeoutMs" value="${ho.localPhaseTimeoutMs != null ? escapeAttr(String(ho.localPhaseTimeoutMs)) : ""}" placeholder="120000" />
+        </label>
+        <label class="inline tight"><span>Local max attempts</span>
+          <input type="number" min="1" step="1" data-wid="${escapeAttr(w.id)}" data-part="localMaxAttempts" value="${ho.localMaxAttempts != null ? escapeAttr(String(ho.localMaxAttempts)) : ""}" placeholder="2" />
+        </label>
+        <label class="enable-row">
+          <input type="checkbox" data-wid="${escapeAttr(w.id)}" data-part="allowCloudEscalation" ${ho.allowCloudEscalation !== false ? "checked" : ""} /> Allow Cursor cloud escalation when repo URL is set
+        </label>
+        <div class="row wrap">
+          <button type="button" data-action="hybrid-local-then-cursor" data-wid="${escapeAttr(w.id)}">Local attempt + escalate</button>
+          <button type="button" class="secondary" data-action="hybrid-cursor-only" data-wid="${escapeAttr(w.id)}">Cursor escalate only</button>
+        </div>
+        <pre class="worker-hybrid-out preview small" data-hybrid-out data-wid="${escapeAttr(w.id)}"></pre>
+      </div>
       <div class="docker-steps">
         <div class="docker-step">
           <span class="step-num">1</span>
@@ -394,10 +504,25 @@ let workersCache = [];
 async function loadWorkers() {
   workersCache = await invoke("get_workers");
   workersCache.forEach(ensureEnvBindings);
+  workersCache.forEach(ensureHybridOptions);
   renderWorkers(workersCache);
 }
 
 document.getElementById("workers-list").addEventListener("change", (e) => {
+  const hb = e.target.closest(".hybrid-block [data-part]");
+  if (hb) {
+    const wid = hb.dataset.wid;
+    const part = hb.dataset.part;
+    if (wid && part) {
+      if (hb.type === "checkbox") {
+        upsertHybridField(wid, part, hb.checked);
+      } else {
+        upsertHybridField(wid, part, hb.value);
+      }
+    }
+    return;
+  }
+
   const t = e.target;
   const root = document.getElementById("workers-list");
 
@@ -462,6 +587,14 @@ document.getElementById("workers-list").addEventListener("change", (e) => {
 });
 
 document.getElementById("workers-list").addEventListener("input", (e) => {
+  const num = e.target.closest('.hybrid-block input[type="number"][data-part]');
+  if (num) {
+    const wid = num.dataset.wid;
+    const part = num.dataset.part;
+    if (wid && part) upsertHybridField(wid, part, num.value);
+    return;
+  }
+
   const inp = e.target.closest("input[data-env-bind]");
   if (inp) {
     const wid = inp.dataset.wid;
@@ -492,6 +625,17 @@ document.getElementById("workers-list").addEventListener("click", async (e) => {
   }
   if (t.closest("[data-action='show-tasks-help']")) {
     openModal(document.getElementById("modal-tasks"));
+    return;
+  }
+
+  const hy1 = t.closest("[data-action='hybrid-local-then-cursor']");
+  if (hy1) {
+    await persistAndRunHybrid(hy1.dataset.wid, false);
+    return;
+  }
+  const hy2 = t.closest("[data-action='hybrid-cursor-only']");
+  if (hy2) {
+    await persistAndRunHybrid(hy2.dataset.wid, true);
     return;
   }
 

@@ -1,0 +1,16 @@
+[package]
+name = "ai_worker_hybrid"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Hybrid Ollama + Cursor SDK bridge for local-ai-worker"
+
+[dependencies]
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+thiserror = "1"
+ai_worker_core = { path = "../ai_worker_core" }
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time"] }
+
+[dev-dependencies]
+tempfile = "3"

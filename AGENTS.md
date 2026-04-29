@@ -29,8 +29,11 @@ This file is the **primary onboarding document** for coding agents (and humans) 
 .github/               # CI (ci.yml, release.yml, version-bump.yml), PR template
 crates/
   ai_worker_core/      # Library: rules, context, audit, docker helpers, worker_config, worker-guard binary
+  ai_worker_hybrid/     # Bounded Ollama + Cursor SDK bridge types (no Tauri); used by src-tauri
+cursor-agent-bridge/   # Node: @cursor/sdk CLI (cli.mjs); npm ci here before hybrid escalation
 docker/                # Dockerfile.worker, agent-loop.sh, entrypoints, wrappers
 docs/                  # USER_GUIDE, COMPOSE_WORKERS, architecture, rules/rules-tree.json, schemas/
+IMPLEMENTATION_PLAN.md # Architecture notes: hybrid Ollama + Cursor SDK
 scripts/               # bump-version.mjs, inject-updater-endpoint.mjs
 src/                   # Vite app: index.html, main.js, styles.css, updater.js → dist/
 src-tauri/             # Tauri crate: lib.rs, compose.rs, secrets.rs, worker_docker.rs, tauri.conf.json, capabilities/, resources/compose/
@@ -49,9 +52,10 @@ Generated / not primary sources of truth for agents: `src/dist/`, `target/`, `no
 ## Architecture boundaries (dependency direction)
 
 1. **`crates/ai_worker_core`** — **No Tauri**. Pure Rust. Used by `src-tauri` and `test`. Embeds `docs/rules/rules-tree.json` via `include_str!`. Adding a domain means editing that JSON and any Rust validation in `worker_config` / `rules`.
-2. **`src-tauri`** — **Tauri commands**, filesystem, keyring, Docker CLI. Depends on `ai_worker_core`. **`src-tauri/src/lib.rs`** registers all `#[tauri::command]` handlers and `RunEvent::Exit` (session snapshot). **`secrets.rs`** = KV secret names + keychain entries. **`worker_docker.rs`** = container lifecycle + `env_from_secrets` → `-e` flags.
-3. **`src/` (frontend)** — **No direct filesystem**. Uses `invoke("commandName", { ... })` only. CamelCase in JSON matches serde `rename_all = "camelCase"` on Rust structs.
-4. **`docker/`** — Agent image and loop; must stay consistent with **`WorkerDefinition`** / `agent-config.json` shape materialized in `worker_docker.rs` (`materialize_worker_runtime`).
+2. **`crates/ai_worker_hybrid`** — **No Tauri**. Bounded Ollama loop + verifier trait + Node `cursor-agent-bridge` stdin/stdout JSON. Consumed by `src-tauri` hybrid commands only.
+3. **`src-tauri`** — **Tauri commands**, filesystem, keyring, Docker CLI. Depends on `ai_worker_core` and `ai_worker_hybrid`. **`src-tauri/src/lib.rs`** registers all `#[tauri::command]` handlers and `RunEvent::Exit` (session snapshot). **`secrets.rs`** = KV secret names + keychain entries. **`worker_docker.rs`** = container lifecycle + `env_from_secrets` → `-e` flags. **`hybrid.rs`** = host-side hybrid run (`hybrid_run_worker`, `hybrid_bridge_status`).
+4. **`src/` (frontend)** — **No direct filesystem**. Uses `invoke("commandName", { ... })` only. CamelCase in JSON matches serde `rename_all = "camelCase"` on Rust structs.
+5. **`docker/`** — Agent image and loop; must stay consistent with **`WorkerDefinition`** / `agent-config.json` shape materialized in `worker_docker.rs` (`materialize_worker_runtime`).
 
 **Rule of thumb:** schema changes to workers require **`WorkerDefinition`** in Rust, **`docs/schemas/worker-definition.schema.json`**, frontend **`workerTemplate` / renderers**, and any **`test/`** struct literals.
 
@@ -84,6 +88,7 @@ Typical contents:
 - **`maintenanceDomain`** — Key into `rules-tree.json` `domains` (e.g. `git`). Drives guardrails + prompt section.
 - **`tasks`** — Each has `schedule`: **`oneShot`** or **`cadence`** with **`intervalSeconds`** (see `docker/agent-loop.sh` for due logic).
 - **`envFromSecrets`** — Maps **secret key** (KV store name) → **container env var**. If `GITHUB_TOKEN` not mapped, legacy/`github_token` secret still injected when present.
+- **`hybridOptions`** — Optional host-side **bounded Ollama + Cursor SDK** escalation (see `crates/ai_worker_hybrid`, `cursor-agent-bridge/cli.mjs`). Uses keychain secret (default name `cursor_api_key`) for `CURSOR_API_KEY` when invoking Node.
 - **`enabled`** — UI/scheduling intent; reopen prompt uses last saved enabled flags on app exit.
 
 ### Secrets
@@ -104,7 +109,7 @@ Typical contents:
 
 ## Frontend (`src/`)
 
-- **`main.js`** — Navigation views, workers CRUD UI, secrets table, compose actions, modals (domain/tasks help, session restore), `invoke` wiring.
+- **`main.js`** — Navigation views, workers CRUD UI, hybrid escalation controls, secrets table, compose actions, modals (domain/tasks help, session restore), `invoke` wiring.
 - **`index.html`** — Shell: sidebar nav (Overview, Ollama stack, Workers, Secrets, Diagnostics).
 - **`styles.css`** — Layout and component styles.
 - **`updater.js`** — Update check scheduler + Tauri updater plugin.
@@ -118,6 +123,7 @@ Typical contents:
 Registered in **`src-tauri/src/lib.rs`** `generate_handler!`:
 
 - Workers: `get_workers`, `save_workers`, `worker_storage_prepare`, `worker_docker_start` / `stop` / `recreate` / `status` / `logs`
+- Hybrid (host): `hybrid_bridge_status`, `hybrid_run_worker` (bounded local Ollama + `@cursor/sdk` via `cursor-agent-bridge`; requires Node on PATH + `npm ci` in `cursor-agent-bridge/`)
 - Secrets: `secret_keys_list`, `secret_set`, `secret_delete`, `github_token_configured`, `set_github_token`, `delete_github_token`
 - Environment: `docker_status`, `hardware_profile`, `ollama_list_models`, `ollama_stack_gpu_hint`, `ollama_stack_up` / `down` / `status`
 - Rules / UX: `assemble_prompt_preview`, `rules_domains_list`, `session_peek_pending_restore`, `session_resolve_restore`
@@ -158,7 +164,7 @@ CI path filters (`.github/workflows/ci.yml`): changes under `src/`, `playwright`
 
 | Change | Also update |
 |--------|-------------|
-| `WorkerDefinition` fields | `docs/schemas/worker-definition.schema.json`, `main.js` (`workerTemplate`, render), `test/tests/*.rs` literals, `worker_docker` / agent-config materialization if needed |
+| `WorkerDefinition` fields | `docs/schemas/worker-definition.schema.json`, `main.js` (`workerTemplate`, render, hybrid controls), `test/tests/*.rs` literals, `worker_docker` / agent-config materialization if needed |
 | Rules domains / guardrails | `docs/rules/rules-tree.json`, `rules_domains_list` consumers, USER_GUIDE if user-visible |
 | Agent task schedule semantics | `docker/agent-loop.sh`, `worker_config` / schema, UI task editors |
 | New Tauri command | `lib.rs` handler list, frontend `invoke`, optionally `capabilities` if permissions change |

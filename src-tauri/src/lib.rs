@@ -1,8 +1,11 @@
 //! Tauri backend: workers persistence, secrets, Docker/Ollama helpers.
 
 mod compose;
+mod hybrid;
 mod secrets;
 mod worker_docker;
+
+use hybrid::{hybrid_bridge_status, hybrid_run_worker};
 
 use ai_worker_core::{
     audit::AuditLog,
@@ -16,13 +19,13 @@ use std::collections::HashMap;
 use std::path::PathBuf;
 use std::sync::Mutex;
 
-fn app_dir() -> PathBuf {
+pub(crate) fn app_dir() -> PathBuf {
     dirs::data_local_dir()
         .unwrap_or_else(|| PathBuf::from("."))
         .join("local-ai-worker")
 }
 
-fn workers_path() -> PathBuf {
+pub(crate) fn workers_path() -> PathBuf {
     app_dir().join("workers.json")
 }
 
@@ -61,7 +64,7 @@ fn write_pending_restore_on_app_exit() {
     })();
 }
 
-fn read_workers() -> Result<Vec<WorkerDefinition>, String> {
+pub(crate) fn read_workers() -> Result<Vec<WorkerDefinition>, String> {
     let p = workers_path();
     if !p.exists() {
         return Ok(vec![]);
@@ -503,6 +506,8 @@ pub fn run() {
             rules_domains_list,
             session_peek_pending_restore,
             session_resolve_restore,
+            hybrid_bridge_status,
+            hybrid_run_worker,
         ])
         .build(tauri::generate_context!())
         .expect("error while building tauri application")
