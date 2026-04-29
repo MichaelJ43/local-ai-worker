@@ -2,7 +2,7 @@
 
 use ai_worker_core::audit::AuditLog;
 use ai_worker_core::context::WorkerContext;
-use ai_worker_core::hardware;
+use ai_worker_core::llm_source::ResolvedWorkerOllama;
 use ai_worker_core::rules::{self, RulesTree};
 use ai_worker_core::worker_config::WorkerDefinition;
 use std::collections::HashSet;
@@ -65,7 +65,11 @@ fn docker_volume_create(name: &str) -> Result<(), String> {
 }
 
 /// Ensure dirs, context file, Docker volume; update worker paths in `w` and persist via caller.
-pub fn prepare_worker_storage(app_root: &Path, w: &mut WorkerDefinition) -> Result<(), String> {
+pub fn prepare_worker_storage(
+    app_root: &Path,
+    w: &mut WorkerDefinition,
+    ollama: &ResolvedWorkerOllama,
+) -> Result<(), String> {
     let ctx = default_context_file(app_root, &w.id);
     std::fs::create_dir_all(ctx.parent().ok_or("context path")?).map_err(|e| e.to_string())?;
     let context = WorkerContext::load_or_create(&ctx).map_err(|e| e.to_string())?;
@@ -79,12 +83,16 @@ pub fn prepare_worker_storage(app_root: &Path, w: &mut WorkerDefinition) -> Resu
         .unwrap_or_else(|| default_long_term_volume_name(&w.id));
     docker_volume_create(&vol)?;
     w.long_term_volume = Some(vol);
-    materialize_worker_runtime(app_root, w)?;
+    materialize_worker_runtime(app_root, w, ollama)?;
     Ok(())
 }
 
 /// Writes `guardrails.effective.json`, `system-prompt.txt`, and `agent-config.json` under `workers/<id>/`.
-pub fn materialize_worker_runtime(app_root: &Path, w: &WorkerDefinition) -> Result<(), String> {
+pub fn materialize_worker_runtime(
+    app_root: &Path,
+    w: &WorkerDefinition,
+    ollama: &ResolvedWorkerOllama,
+) -> Result<(), String> {
     let ctx_path = w
         .context_path
         .as_deref()
@@ -114,21 +122,10 @@ pub fn materialize_worker_runtime(app_root: &Path, w: &WorkerDefinition) -> Resu
     let prompt_path = wid_dir.join("system-prompt.txt");
     std::fs::write(&prompt_path, section).map_err(|e| e.to_string())?;
 
-    let model = w
-        .model_override
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| hardware::probe_system().suggested_model.clone());
-    let ollama_host = w
-        .ollama_host
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "http://host.docker.internal:11434".into());
-
     let agent_cfg = serde_json::json!({
         "workerId": w.id,
-        "model": model,
-        "ollamaHost": ollama_host,
+        "model": ollama.model_for_agent_config,
+        "ollamaHost": ollama.docker_env_host,
         "systemPromptPath": "/workspace/system-prompt.txt",
         "pollSeconds": 45,
         "tasks": w.tasks,
@@ -177,7 +174,12 @@ fn collect_container_secret_env(w: &WorkerDefinition) -> Result<Vec<(String, Str
     Ok(out)
 }
 
-pub fn worker_start(app_root: &Path, audit_db: &Path, w: &WorkerDefinition) -> Result<String, String> {
+pub fn worker_start(
+    app_root: &Path,
+    audit_db: &Path,
+    w: &WorkerDefinition,
+    ollama: &ResolvedWorkerOllama,
+) -> Result<String, String> {
     let ctx_path = w
         .context_path
         .as_deref()
@@ -187,7 +189,7 @@ pub fn worker_start(app_root: &Path, audit_db: &Path, w: &WorkerDefinition) -> R
         .as_deref()
         .ok_or("worker has no longTermVolume — run prepare first")?;
 
-    materialize_worker_runtime(app_root, w)?;
+    materialize_worker_runtime(app_root, w, ollama)?;
     AuditLog::open(audit_db).map_err(|e| e.to_string())?;
 
     let wid_dir = app_root.join("workers").join(&w.id);
@@ -207,12 +209,7 @@ pub fn worker_start(app_root: &Path, audit_db: &Path, w: &WorkerDefinition) -> R
         .stderr(std::process::Stdio::null())
         .status();
 
-    let ollama_host = w
-        .ollama_host
-        .clone()
-        .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "http://host.docker.internal:11434".into());
-
+    let ollama_host = ollama.docker_env_host.clone();
     let mut cmd = Command::new("docker");
     cmd.args(["run", "-d", "--name", &cname, "--restart", "unless-stopped"]);
     cmd.args(["--add-host", "host.docker.internal:host-gateway"]);
@@ -262,16 +259,50 @@ pub fn worker_logs(worker_id: &str, tail: usize) -> Result<String, String> {
 
 pub fn worker_stop(worker_id: &str) -> Result<String, String> {
     let cname = container_name_for_worker(worker_id);
-    let out = Command::new("docker")
-        .args(["rm", "-f", &cname])
-        .output()
+    let st = Command::new("docker")
+        .args(["stop", "--time", "45", &cname])
+        .stderr(std::process::Stdio::null())
+        .status()
         .map_err(|e| e.to_string())?;
-    Ok(String::from_utf8_lossy(&out.stdout).to_string() + &String::from_utf8_lossy(&out.stderr))
+    if st.success() || st.code() == Some(1) {
+        // Exit 1: no such container — treat as OK for idempotent disable.
+    }
+    Ok(format!("stop {cname} ({})", if st.success() { "ok" } else { "no container or already stopped" }))
 }
 
-pub fn worker_recreate(app_root: &Path, audit_db: &Path, w: &WorkerDefinition) -> Result<String, String> {
-    worker_stop(&w.id)?;
-    worker_start(app_root, audit_db, w)
+pub fn worker_recreate(
+    app_root: &Path,
+    audit_db: &Path,
+    w: &WorkerDefinition,
+    ollama: &ResolvedWorkerOllama,
+) -> Result<String, String> {
+    let _ = worker_stop(&w.id)?;
+    worker_start(app_root, audit_db, w, ollama)
+}
+
+/// Fully remove container, long-term volume (if set), and workspace directory under app data.
+pub fn worker_teardown_all(app_root: &Path, w: &WorkerDefinition) -> Result<(), String> {
+    let cname = container_name_for_worker(&w.id);
+    let _ = Command::new("docker")
+        .args(["rm", "-f", &cname])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+    if let Some(vol) = w.long_term_volume.as_deref() {
+        let v = vol.trim();
+        if !v.is_empty() {
+            let _ = Command::new("docker")
+                .args(["volume", "rm", "-f", v])
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status();
+        }
+    }
+    let wid_dir = app_root.join("workers").join(&w.id);
+    if wid_dir.is_dir() {
+        std::fs::remove_dir_all(&wid_dir).map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 pub fn worker_ps(worker_id: &str) -> Result<String, String> {

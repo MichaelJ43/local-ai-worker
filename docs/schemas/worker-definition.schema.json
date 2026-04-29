@@ -8,6 +8,10 @@
     "id": { "type": "string", "minLength": 1 },
     "name": { "type": "string" },
     "maintenanceDomain": { "type": "string" },
+    "escalationPath": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
     "modelOverride": { "type": ["string", "null"] },
     "ollamaHost": { "type": ["string", "null"] },
     "enabled": { "type": "boolean" },

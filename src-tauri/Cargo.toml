@@ -25,4 +25,5 @@ ai_worker_core = { path = "../crates/ai_worker_core" }
 ai_worker_hybrid = { path = "../crates/ai_worker_hybrid" }
 keyring = "3"
 dirs = "5"
+uuid = { version = "1", features = ["v4"] }
 chrono = "0.4"

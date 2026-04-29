@@ -11,11 +11,11 @@
       <aside class="nav-rail" aria-label="Primary">
         <div class="brand">
           <strong>Local AI Worker</strong>
-          <span class="brand-sub">rules · workers · stack</span>
+          <span class="brand-sub">rules · workers · LLMs</span>
         </div>
         <nav class="nav-buttons">
           <button type="button" class="nav-item active" data-nav="overview">Overview</button>
-          <button type="button" class="nav-item" data-nav="stack">Ollama stack</button>
+          <button type="button" class="nav-item" data-nav="llmSources">LLM sources</button>
           <button type="button" class="nav-item" data-nav="workers">Workers</button>
           <button type="button" class="nav-item" data-nav="secrets">Secrets</button>
           <button type="button" class="nav-item" data-nav="diagnostics">Diagnostics</button>
@@ -45,7 +45,7 @@
               <section class="panel">
                 <h2>Quick start</h2>
                 <ol class="quick-steps">
-                  <li><strong>Stack</strong> — start the Ollama Compose stack.</li>
+                  <li><strong>LLM sources</strong> — configure backends and local Compose stack.</li>
                   <li><strong>Secrets</strong> — store API tokens (e.g. <code>github_token</code>).</li>
                   <li><strong>Workers</strong> — configure tasks and start containers.</li>
                 </ol>
@@ -57,9 +57,23 @@
             </div>
           </div>
 
-          <div class="view" data-view="stack">
+          <div class="view" data-view="llmSources">
+            <section class="panel wide" id="llm-catalog-panel">
+              <h2>Saved LLM sources</h2>
+              <p class="hint">
+                Ollama and Cursor backends referenced by worker escalation paths. API keys stay in Secrets;
+                Cursor sources reference a secret <strong>name</strong> only.
+              </p>
+              <div id="llm-sources-msg" class="status"></div>
+              <div id="llm-sources-editor" class="llm-catalog"></div>
+              <div class="row wrap">
+                <button type="button" id="btn-llm-add-ollama" class="secondary">+ Ollama source</button>
+                <button type="button" id="btn-llm-add-cursor" class="secondary">+ Cursor source</button>
+                <button type="button" id="btn-llm-sources-save">Save LLM sources</button>
+              </div>
+            </section>
             <section class="panel wide">
-              <h2>Ollama stack (Docker Compose)</h2>
+              <h2>Local Ollama stack (Docker Compose)</h2>
               <p class="hint">
                 Compose files are bundled in the app, written to your app data folder, then
                 <code>docker compose</code> is run. GPU mode adds
@@ -96,12 +110,11 @@
             <section class="panel wide">
               <h2>Workers</h2>
               <p class="hint">
-                Map named secrets to container environment variables in each worker card. Empty mapping still
-                forwards <code>GITHUB_TOKEN</code> when a GitHub token secret exists. For a <strong>new</strong> worker,
-                run <strong>Prepare storage</strong> once, then <strong>Start container</strong>. Optionally use
-                <strong>Hybrid</strong> to run bounded Ollama attempts and escalate via Cursor SDK (requires Node
-                plus <code>cursor-agent-bridge</code> dependencies). Click
-                <strong>Save workers</strong> before quitting so enabled flags persist (used for the reopen reminder).
+                Configure an <strong>escalation path</strong> (ordered tiers from LLM sources). New workers save as
+                <strong>disabled</strong>; when you enable and save, the app prepares storage and starts Docker as needed.
+                Stopping disables only removes the container (images and volumes stay). Delete removes a worker only while
+                disabled. Use Hybrid to escalate from local Ollama to Cursor SDK (needs Node +
+                <code>cursor-agent-bridge</code>).
               </p>
               <div id="workers-list" class="workers"></div>
               <div class="row">

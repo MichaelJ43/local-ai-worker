@@ -2,6 +2,8 @@
 
 use serde::{Deserialize, Serialize};
 
+use crate::llm_source::{self, LlmSourceDefinition};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct WorkerDefinition {
@@ -9,6 +11,9 @@ pub struct WorkerDefinition {
     pub name: String,
     /// Domain key in rules-tree, e.g. `git`.
     pub maintenance_domain: String,
+    /// Ordered list of `llm_sources.json` tier ids (OLLAMA tier required for Docker agent enablement).
+    #[serde(default)]
+    pub escalation_path: Vec<String>,
     #[serde(default)]
     pub model_override: Option<String>,
     #[serde(default)]
@@ -137,6 +142,60 @@ impl WorkerDefinition {
                         }
                     }
                 }
+            }
+        }
+        Ok(())
+    }
+
+    /// Validate escalation path refs + Docker enable requirements when catalogs are loaded.
+    pub fn validate_with_llm_catalog(
+        &self,
+        sources: &[LlmSourceDefinition],
+    ) -> Result<(), String> {
+        for tier_id in &self.escalation_path {
+            if tier_id.trim().is_empty() {
+                return Err("escalationPath entries must not be empty".into());
+            }
+            if llm_source::source_by_id(sources, tier_id).is_none() {
+                return Err(format!(
+                    "escalationPath references unknown source id `{}` — check LLM sources",
+                    tier_id
+                ));
+            }
+        }
+        if self.enabled {
+            if self.escalation_path.is_empty() {
+                return Err(
+                    "enabled workers need a non-empty escalationPath (add LLM sources)".into(),
+                );
+            }
+            let first_cursor_idx = self
+                .escalation_path
+                .iter()
+                .position(|id| {
+                    llm_source::source_by_id(sources, id)
+                        .is_some_and(|s| matches!(s, LlmSourceDefinition::Cursor { .. }))
+                });
+            let first_oll_idx = self.escalation_path.iter().position(|id| {
+                llm_source::source_by_id(sources, id)
+                    .is_some_and(|s| matches!(s, LlmSourceDefinition::Ollama { .. }))
+            });
+
+            if let (Some(oi), Some(ci)) = (first_oll_idx, first_cursor_idx) {
+                if ci < oi {
+                    return Err(
+                        "Hybrid escalation ordering not supported yet: Cursor tier before Ollama tier"
+                            .into(),
+                    );
+                }
+            }
+            if llm_source::resolve_first_ollama_for_escalation(sources, &self.escalation_path)
+                .is_err()
+            {
+                return Err(
+                    "enabled Docker workers require escalationPath to include an Ollama source tier"
+                        .into(),
+                );
             }
         }
         Ok(())

@@ -1,0 +1,35 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://local-ai-worker.local/llm-sources.schema.json",
+  "title": "llm_sources.json",
+  "description": "Array of configured Ollama and Cursor backends (serde tag 'kind'; matches ai_worker_core::LlmSourceDefinition).",
+  "type": "array",
+  "items": {
+    "oneOf": [
+      {
+        "type": "object",
+        "required": ["kind", "id", "name", "baseUrl", "defaultModel"],
+        "properties": {
+          "kind": { "const": "ollama" },
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "baseUrl": { "type": "string" },
+          "defaultModel": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      },
+      {
+        "type": "object",
+        "required": ["kind", "id", "name", "cursorModelId", "secretKeyName"],
+        "properties": {
+          "kind": { "const": "cursor" },
+          "id": { "type": "string", "minLength": 1 },
+          "name": { "type": "string", "minLength": 1 },
+          "cursorModelId": { "type": "string", "minLength": 1 },
+          "secretKeyName": { "type": "string", "minLength": 1 }
+        },
+        "additionalProperties": false
+      }
+    ]
+  }
+}

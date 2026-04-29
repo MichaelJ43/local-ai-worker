@@ -9,6 +9,7 @@ pub mod docker;
 pub mod error;
 pub mod guard_exec;
 pub mod hardware;
+pub mod llm_source;
 pub mod ollama;
 pub mod rate_limits;
 pub mod rules;
