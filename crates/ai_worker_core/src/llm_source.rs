@@ -100,6 +100,30 @@ pub fn source_by_id<'a>(
     sources.iter().find(|s| s.id() == id)
 }
 
+/// True when `base_url` points at loopback/local host (`127.0.0.1` / `localhost`), i.e. the bundled Compose Ollama stack.
+pub fn ollama_base_is_host_loopback(base_url: &str) -> bool {
+    let low = base_url.trim().to_ascii_lowercase();
+    low.contains("127.0.0.1") || low.contains("localhost")
+}
+
+/// Enabled worker whose escalation path includes a loopback Ollama tier needs the local Compose stack running.
+pub fn enabled_worker_needs_loopback_ollama_stack(
+    w: &crate::worker_config::WorkerDefinition,
+    sources: &[LlmSourceDefinition],
+) -> bool {
+    if !w.enabled {
+        return false;
+    }
+    for tier_id in &w.escalation_path {
+        if let Some(LlmSourceDefinition::Ollama { base_url, .. }) = source_by_id(sources, tier_id) {
+            if ollama_base_is_host_loopback(base_url) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// Map an Ollama base URL toward an address reachable from inside an agent container.
 ///
 /// Loopback-ish URLs are rewritten through `host.docker.internal` (preserving `:port`).

@@ -18,7 +18,8 @@ use ai_worker_core::{
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::PathBuf;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
+use tauri::Emitter;
 
 pub(crate) fn app_dir() -> PathBuf {
     dirs::data_local_dir()
@@ -97,8 +98,14 @@ fn rules_tree_cached() -> Result<RulesTree, String> {
     serde_json::from_str(ai_worker_core::DEFAULT_RULES_TREE_JSON).map_err(|e| e.to_string())
 }
 
-#[derive(Default)]
-pub struct AppLogBuffer(Mutex<Vec<String>>);
+#[derive(Clone)]
+pub struct AppLogBuffer(Arc<Mutex<Vec<String>>>);
+
+impl Default for AppLogBuffer {
+    fn default() -> Self {
+        Self(Arc::new(Mutex::new(Vec::new())))
+    }
+}
 
 const APP_LOG_MAX: usize = 200;
 
@@ -130,14 +137,54 @@ fn save_llm_sources(sources: Vec<LlmSourceDefinition>) -> Result<(), String> {
     persist_llm::write_llm_sources(&sources)
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SaveWorkersResponse {
+    runtime_pending: bool,
+}
+
 #[tauri::command]
-fn save_workers(workers: Vec<WorkerDefinition>, log: tauri::State<AppLogBuffer>) -> Result<(), String> {
+fn save_workers(
+    workers: Vec<WorkerDefinition>,
+    app: tauri::AppHandle,
+    log: tauri::State<AppLogBuffer>,
+) -> Result<SaveWorkersResponse, String> {
     persist_llm::ensure_migration()?;
     let catalog = persist_llm::read_llm_sources_raw()?;
     let prev = read_workers_disk_internal().unwrap_or_default();
     write_workers_with_llm(&workers, &catalog)?;
-    persist_llm::apply_runtime_after_workers_save(log.inner(), &prev)?;
-    Ok(())
+
+    let prev_clone = prev;
+    let log_clone = (*log).clone();
+    let app_clone = app.clone();
+    let _ = app.emit(
+        "runtime-phase",
+        serde_json::json!({ "message": "Applying worker runtime…" }),
+    );
+    std::thread::spawn(move || {
+        push_app_log(&log_clone, "runtime apply (background)…");
+        let outcome = persist_llm::apply_runtime_after_workers_save(&log_clone, &prev_clone);
+        match outcome {
+            Ok(()) => {
+                push_app_log(&log_clone, "runtime apply finished");
+                let _ = app_clone.emit(
+                    "runtime-finished",
+                    serde_json::json!({ "ok": true }),
+                );
+            }
+            Err(e) => {
+                push_app_log(&log_clone, format!("runtime apply ERR {e}"));
+                let _ = app_clone.emit(
+                    "runtime-error",
+                    serde_json::json!({ "error": e }),
+                );
+            }
+        }
+    });
+
+    Ok(SaveWorkersResponse {
+        runtime_pending: true,
+    })
 }
 
 #[tauri::command]
@@ -481,11 +528,18 @@ fn session_peek_pending_restore() -> Result<Option<PendingRestoreFile>, String> 
     Ok(Some(doc))
 }
 
+#[derive(Serialize)]
+#[serde(rename_all = "camelCase")]
+struct SessionRestoreResponse {
+    runtime_pending: bool,
+}
+
 #[tauri::command]
 fn session_resolve_restore(
     choice: String,
+    app: tauri::AppHandle,
     log: tauri::State<AppLogBuffer>,
-) -> Result<(), String> {
+) -> Result<SessionRestoreResponse, String> {
     persist_llm::ensure_migration()?;
     if choice == "dismiss" {
         let cleared = PendingRestoreFile {
@@ -498,7 +552,9 @@ fn session_resolve_restore(
             serde_json::to_string_pretty(&cleared).map_err(|e| e.to_string())?,
         )
         .map_err(|e| e.to_string())?;
-        return Ok(());
+        return Ok(SessionRestoreResponse {
+            runtime_pending: false,
+        });
     }
 
     let prev = read_workers_disk_internal().unwrap_or_default();
@@ -530,7 +586,6 @@ fn session_resolve_restore(
 
     let catalog = persist_llm::read_llm_sources_raw()?;
     write_workers_with_llm(&workers, &catalog)?;
-    persist_llm::apply_runtime_after_workers_save(log.inner(), &prev)?;
 
     let cleared = PendingRestoreFile {
         should_prompt: false,
@@ -542,7 +597,38 @@ fn session_resolve_restore(
         serde_json::to_string_pretty(&cleared).map_err(|e| e.to_string())?,
     )
     .map_err(|e| e.to_string())?;
-    Ok(())
+
+    let prev_clone = prev;
+    let log_clone = (*log).clone();
+    let app_clone = app.clone();
+    let _ = app.emit(
+        "runtime-phase",
+        serde_json::json!({ "message": "Applying session restore…" }),
+    );
+    std::thread::spawn(move || {
+        push_app_log(&log_clone, "session restore runtime apply (background)…");
+        let outcome = persist_llm::apply_runtime_after_workers_save(&log_clone, &prev_clone);
+        match outcome {
+            Ok(()) => {
+                push_app_log(&log_clone, "session restore runtime finished");
+                let _ = app_clone.emit(
+                    "runtime-finished",
+                    serde_json::json!({ "ok": true }),
+                );
+            }
+            Err(e) => {
+                push_app_log(&log_clone, format!("session restore runtime ERR {e}"));
+                let _ = app_clone.emit(
+                    "runtime-error",
+                    serde_json::json!({ "error": e }),
+                );
+            }
+        }
+    });
+
+    Ok(SessionRestoreResponse {
+        runtime_pending: true,
+    })
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]

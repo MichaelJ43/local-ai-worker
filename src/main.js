@@ -4,6 +4,7 @@ import {
   openReleasesPage,
   startUpdateCheckScheduler,
 } from "./updater.js";
+import { listen } from "@tauri-apps/api/event";
 
 const VIEW_TITLES = {
   overview: "Overview",
@@ -27,6 +28,114 @@ async function loadLlmSources() {
 /** @type {{ key: string, label: string, selectable: boolean }[]} */
 let domainsCache = [];
 const draftWorkerIds = new Set();
+
+const DEFAULT_AGENT_IMAGE = "local-ai-worker-agent:latest";
+
+/** @type {string | null} */
+let expandedWorkerId = null;
+
+/** @type {Record<string, object>} */
+let lastPersistedById = {};
+
+/** @type {Array<object>} */
+let workersCache = [];
+
+function rebuildLastPersistedSnapshots() {
+  lastPersistedById = {};
+  for (const w of workersCache) {
+    try {
+      lastPersistedById[w.id] = structuredClone(w);
+    } catch {
+      lastPersistedById[w.id] = JSON.parse(JSON.stringify(w));
+    }
+  }
+}
+
+function setRuntimeBanner(visible, message = "") {
+  const bar = document.getElementById("runtime-banner");
+  const txt = document.getElementById("runtime-banner-text");
+  if (!bar || !txt) return;
+  if (visible) {
+    txt.textContent = message || "Applying worker runtime…";
+    bar.classList.remove("hidden");
+  } else {
+    bar.classList.add("hidden");
+    txt.textContent = "";
+  }
+}
+
+/** @returns {Promise<() => void>} */
+async function bindRuntimeListeners() {
+  const unsubs = [];
+  try {
+    unsubs.push(
+      await listen("runtime-phase", (ev) => {
+        const m = typeof ev.payload === "object" && ev.payload && ev.payload.message;
+        setRuntimeBanner(true, typeof m === "string" ? m : String(ev.payload));
+      }),
+    );
+    unsubs.push(
+      await listen("runtime-finished", async () => {
+        setRuntimeBanner(false);
+        await refreshEnv();
+        await refreshAppLog();
+      }),
+    );
+    unsubs.push(
+      await listen("runtime-error", async (ev) => {
+        setRuntimeBanner(false);
+        const err =
+          typeof ev.payload === "object" && ev.payload && ev.payload.error != null
+            ? String(ev.payload.error)
+            : String(ev.payload);
+        const msg = document.getElementById("workers-msg");
+        if (msg) msg.textContent = err;
+        await refreshAppLog();
+      }),
+    );
+  } catch {
+    /* non-Tauri / tests */
+  }
+  return () => unsubs.forEach((u) => u());
+}
+
+function normalizeWorkerForSave(w) {
+  if (!w.tasks) w.tasks = [];
+  for (const t of w.tasks) {
+    if (t.schedule?.kind === "cadence") {
+      const sec = Number(
+        t.schedule.intervalSeconds ?? t.schedule.interval_seconds,
+      );
+      t.schedule = {
+        kind: "cadence",
+        intervalSeconds: Math.max(30, Number.isFinite(sec) ? sec : 3600),
+      };
+    }
+  }
+  if (!w.dockerImage || !String(w.dockerImage).trim()) {
+    w.dockerImage = DEFAULT_AGENT_IMAGE;
+  }
+}
+
+function normalizeAllWorkersForSave() {
+  workersCache.forEach((w) => normalizeWorkerForSave(w));
+}
+
+async function persistAllWorkers(userMessage) {
+  const msg = document.getElementById("workers-msg");
+  normalizeAllWorkersForSave();
+  if (msg && userMessage) msg.textContent = userMessage;
+  try {
+    const res = await invoke("save_workers", { workers: workersCache });
+    if (res && res.runtimePending) {
+      setRuntimeBanner(true, "Applying worker runtime…");
+    }
+    if (msg) msg.textContent = "Saved.";
+    await loadWorkers();
+  } catch (e) {
+    if (msg) msg.textContent = String(e);
+  }
+}
 
 function showView(navId) {
   document.querySelectorAll(".nav-item").forEach((b) => {
@@ -111,22 +220,14 @@ ${hw.notes}`;
 }
 
 async function refreshComposeHint() {
-  const el = document.getElementById("compose-hint");
+  const el = document.getElementById("compose-status-overview");
   if (!el) return;
   try {
     const h = await invoke("ollama_stack_gpu_hint");
-    el.textContent = `Compose dir: ${h.composeDir}
-nvidia-smi: ${h.nvidiaSmiAvailable ? "yes" : "no"} | Auto GPU: ${h.autoUseGpu ? "on" : "off"}`;
+    el.textContent = `Compose: ${h.composeDir} · nvidia-smi: ${h.nvidiaSmiAvailable ? "yes" : "no"} · auto GPU compose: ${h.autoUseGpu ? "on" : "off"} (Workers using loopback Ollama toggle the stack)`;
   } catch (e) {
     el.textContent = String(e);
   }
-}
-
-function gpuModeArg() {
-  const v = document.getElementById("select-gpu-mode").value;
-  if (v === "auto") return null;
-  if (v === "on") return true;
-  return false;
 }
 
 async function refreshAppLog() {
@@ -168,7 +269,7 @@ function workerTemplate(id) {
     guardrailOverrides: null,
     contextPath: null,
     longTermVolume: null,
-    dockerImage: null,
+    dockerImage: DEFAULT_AGENT_IMAGE,
     envFromSecrets: [],
     hybridOptions: null,
   };
@@ -246,6 +347,29 @@ function findWorkerIndex(wid) {
   return workersCache.findIndex((w) => w.id === wid);
 }
 
+function discardWorkerDraftOrRevert(wid) {
+  const i = findWorkerIndex(wid);
+  if (i < 0) return;
+  if (draftWorkerIds.has(wid)) {
+    draftWorkerIds.delete(wid);
+    if (expandedWorkerId === wid) expandedWorkerId = null;
+    workersCache.splice(i, 1);
+    renderWorkers(workersCache);
+    return;
+  }
+  const snap = lastPersistedById[wid];
+  if (snap) {
+    try {
+      workersCache[i] = structuredClone(snap);
+    } catch {
+      workersCache[i] = JSON.parse(JSON.stringify(snap));
+    }
+    renderWorkers(workersCache);
+  } else {
+    void loadWorkers();
+  }
+}
+
 function ensureEnvBindings(w) {
   if (!Array.isArray(w.envFromSecrets)) w.envFromSecrets = [];
 }
@@ -273,51 +397,6 @@ function ensureHybridOptions(w) {
   const d = defaultHybridOptions();
   for (const k of Object.keys(d)) {
     if (w.hybridOptions[k] === undefined) w.hybridOptions[k] = d[k];
-  }
-}
-
-function upsertHybridField(wid, part, raw) {
-  const i = findWorkerIndex(wid);
-  if (i < 0) return;
-  ensureHybridOptions(workersCache[i]);
-  const numeric = ["localPhaseTimeoutMs", "localMaxAttempts"];
-  if (part === "allowCloudEscalation") {
-    workersCache[i].hybridOptions[part] = !!raw;
-  } else if (numeric.includes(part)) {
-    const t = typeof raw === "number" ? String(raw) : String(raw ?? "").trim();
-    if (t === "") {
-      workersCache[i].hybridOptions[part] = null;
-    } else {
-      const n = Number(t);
-      workersCache[i].hybridOptions[part] =
-        Number.isFinite(n) && n >= 1 ? Math.floor(n) : null;
-    }
-  } else {
-    const s = typeof raw === "string" ? raw.trim() : String(raw ?? "");
-    workersCache[i].hybridOptions[part] = s === "" ? null : s;
-  }
-}
-
-async function persistAndRunHybrid(workerId, skipLocalAttempts) {
-  const msg = document.getElementById("workers-msg");
-  const outEl = document
-    .getElementById("workers-list")
-    ?.querySelector(`pre.worker-hybrid-out[data-wid="${workerId}"]`);
-  msg.textContent = "Saving workers…";
-  try {
-    await loadLlmSources();
-    await invoke("save_workers", { workers: workersCache });
-    msg.textContent = "Running hybrid pipeline…";
-    const res = await invoke("hybrid_run_worker", {
-      workerId,
-      skipLocalAttempts,
-    });
-    msg.textContent = res.ok ? "Hybrid run finished (see preview below)." : "Hybrid run returned ok=false.";
-    if (outEl) outEl.textContent = JSON.stringify(res, null, 2);
-    await refreshAppLog();
-  } catch (err) {
-    msg.textContent = String(err);
-    if (outEl) outEl.textContent = String(err);
   }
 }
 
@@ -392,7 +471,6 @@ function renderWorkers(workers) {
   workers.forEach((w) => {
     ensureEnvBindings(w);
     ensureHybridOptions(w);
-    const ho = w.hybridOptions;
     const gr =
       w.guardrailOverrides != null
         ? JSON.stringify(w.guardrailOverrides, null, 2)
@@ -400,7 +478,9 @@ function renderWorkers(workers) {
     const tasksHtml = w.tasks
       .map((t, ti) => {
         const isCad = t.schedule.kind === "cadence";
-        const intv = isCad ? t.schedule.intervalSeconds : 3600;
+        const intv = isCad
+          ? Number(t.schedule.intervalSeconds ?? t.schedule.interval_seconds) || 3600
+          : 3600;
         return `<div class="task-row-editable" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}">
   <input type="text" data-task-field="title" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}" value="${escapeAttr(t.title)}" />
   <select data-task-field="kind" data-wid="${escapeAttr(w.id)}" data-task-idx="${ti}">
@@ -430,28 +510,50 @@ function renderWorkers(workers) {
       .join("");
 
     const isDraft = draftWorkerIds.has(w.id);
+    const expanded = expandedWorkerId === w.id || draftWorkerIds.has(w.id);
+    const dockerDisplay =
+      w.dockerImage && String(w.dockerImage).trim()
+        ? String(w.dockerImage).trim()
+        : DEFAULT_AGENT_IMAGE;
+
     const card = document.createElement("div");
-    card.className = `worker-card ${w.enabled ? "worker-card--on" : "worker-card--off"}`;
+    card.className = [
+      "worker-card",
+      w.enabled ? "worker-card--on" : "worker-card--off",
+      expanded ? "" : "worker-card--collapsed",
+    ]
+      .filter(Boolean)
+      .join(" ");
+
     card.dataset.workerId = w.id;
-    card.innerHTML = `
-      <div class="worker-head">
-        <div>
-          <strong>${escapeAttr(w.name)}</strong>
-          <code class="wid">${escapeAttr(w.id)}</code>
-        </div>
+
+    let body = "";
+    if (isDraft) {
+      body += `<div class="row"><button type="button" class="secondary" data-action="worker-discard-new" data-wid="${escapeAttr(w.id)}">Discard new worker</button></div>`;
+    }
+    body += `<div class="worker-summary">
+      <div class="worker-summary-meta">
+        <strong>${escapeAttr(w.name)}</strong>
+        <code class="wid" title="${escapeAttr(w.id)}">${escapeAttr(w.id.slice(0, 8))}…</code>
         <span class="worker-status ${w.enabled ? "worker-status--on" : "worker-status--off"}">${w.enabled ? "Enabled" : "Disabled"}</span>
       </div>
-      ${isDraft ? `<div class="row"><button type="button" class="secondary" data-action="worker-discard" data-wid="${escapeAttr(w.id)}">Discard new worker</button></div>` : ""}
-      <label>Name <input data-k="name" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.name)}" /></label>
-      ${domainSelectHtml(w)}
-      ${escalationRowsHtml(w)}
-      <label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.dockerImage || "")}" placeholder="local-ai-worker-agent:latest" /></label>
-      <label class="enable-row"><input data-k="enabled" data-wid="${escapeAttr(w.id)}" type="checkbox" ${w.enabled ? "checked" : ""} /> Worker enabled</label>
-      <p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>
-      <label>Guardrail overrides (JSON object, merged into domain guardrails)
+      <div class="worker-summary-actions">
+        <label class="inline tight"><input type="checkbox" data-summary-enable data-wid="${escapeAttr(w.id)}" ${w.enabled ? "checked" : ""} /> Enabled</label>
+        <button type="button" class="secondary" data-action="worker-edit-config" data-wid="${escapeAttr(w.id)}">${expanded ? "Collapse" : "Edit config"}</button>
+        <button type="button" class="secondary" data-action="worker-delete" data-wid="${escapeAttr(w.id)}" ${w.enabled ? 'disabled="" title="Disable first"' : ""}>Remove</button>
+      </div>
+    </div>`;
+
+    if (expanded) {
+      body += `<div class="worker-detail"><label>Name <input data-k="name" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.name)}" /></label>`;
+      body += domainSelectHtml(w);
+      body += escalationRowsHtml(w);
+      body += `<label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(dockerDisplay)}" placeholder="${escapeAttr(DEFAULT_AGENT_IMAGE)}" /></label>`;
+      body += `<p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>`;
+      body += `<label>Guardrail overrides (JSON object, merged into domain guardrails)
         <textarea data-field="guardrails" data-wid="${escapeAttr(w.id)}" rows="5" class="code">${escapeTextarea(gr)}</textarea>
-      </label>
-      <div class="env-bind-block">
+      </label>`;
+      body += `<div class="env-bind-block">
         <div class="env-bind-label">Secrets → container environment</div>
         <div class="env-bind-rows">
           ${bindHtml || '<p class="hint">No mappings — default <code>GITHUB_TOKEN</code> still applies when configured.</p>'}
@@ -459,52 +561,26 @@ function renderWorkers(workers) {
         <div class="row">
           <button type="button" data-action="env-bind-add" data-wid="${escapeAttr(w.id)}">+ Map secret to env</button>
         </div>
-      </div>
-      <div class="task-block">
+      </div>`;
+      body += `<div class="task-block">
         <div class="task-label">Tasks</div>
-        ${tasksHtml || "<p class=\"hint\">No tasks</p>"}
+        ${tasksHtml || '<p class="hint">No tasks</p>'}
         <div class="row">
           <button type="button" data-action="task-cadence" data-wid="${escapeAttr(w.id)}">+ Cadence</button>
           <button type="button" data-action="task-oneshot" data-wid="${escapeAttr(w.id)}">+ One-shot</button>
         </div>
-      </div>
-      <div class="paths hint">
+      </div>`;
+      body += `<div class="paths hint">
         Context: ${w.contextPath ? escapeAttr(w.contextPath) : "— (run Prepare)"}<br/>
         Volume: ${w.longTermVolume ? escapeAttr(w.longTermVolume) : "—"}
-      </div>
-      <div class="hybrid-block" data-testid="worker-hybrid-section">
-        <div class="task-label">Hybrid escalation (manual run)</div>
-        <p class="hint">
-          Bounded Ollama (from escalation path) → Cursor tier. Configure Cursor + repo here; API keys remain in Secrets /
-          Cursor LLM sources. Requires Node plus <code>cursor-agent-bridge</code> deps.
-        </p>
-        <label>Repo URL (optional, Cursor cloud escalation)
-          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="repoUrl" value="${escapeAttr(ho.repoUrl ?? "")}" placeholder="https://github.com/org/repo.git" />
-        </label>
-        <label class="inline tight"><span>Starting ref</span>
-          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="startingRef" value="${escapeAttr(ho.startingRef ?? "")}" placeholder="main" />
-        </label>
-        <label>Workspace path override (optional; defaults above context JSON dir)
-          <input type="text" data-wid="${escapeAttr(w.id)}" data-part="workspacePath" value="${escapeAttr(ho.workspacePath ?? "")}" />
-        </label>
-        <label class="inline tight"><span>Local phase timeout (ms)</span>
-          <input type="number" min="1000" step="500" data-wid="${escapeAttr(w.id)}" data-part="localPhaseTimeoutMs" value="${ho.localPhaseTimeoutMs != null ? escapeAttr(String(ho.localPhaseTimeoutMs)) : ""}" placeholder="120000" />
-        </label>
-        <label class="inline tight"><span>Local max attempts</span>
-          <input type="number" min="1" step="1" data-wid="${escapeAttr(w.id)}" data-part="localMaxAttempts" value="${ho.localMaxAttempts != null ? escapeAttr(String(ho.localMaxAttempts)) : ""}" placeholder="2" />
-        </label>
-        <label class="enable-row">
-          <input type="checkbox" data-wid="${escapeAttr(w.id)}" data-part="allowCloudEscalation" ${ho.allowCloudEscalation !== false ? "checked" : ""} /> Allow Cursor cloud escalation when repo URL is set
-        </label>
-        <div class="row wrap">
-          <button type="button" data-action="hybrid-local-then-cursor" data-wid="${escapeAttr(w.id)}">Local attempt + escalate</button>
-          <button type="button" class="secondary" data-action="hybrid-cursor-only" data-wid="${escapeAttr(w.id)}">Cursor escalate only</button>
-        </div>
-        <pre class="worker-hybrid-out preview small" data-hybrid-out data-wid="${escapeAttr(w.id)}"></pre>
-      </div>
-      <div class="docker-tools">
+      </div>`;
+      body += `<div class="worker-save-row">
+        <button type="button" data-action="worker-save-one" data-wid="${escapeAttr(w.id)}">Save worker config</button>
+        <button type="button" class="secondary" data-action="worker-discard-one" data-wid="${escapeAttr(w.id)}">${draftWorkerIds.has(w.id) ? "Discard new worker" : "Discard changes"}</button>
+      </div></div>`;
+      body += `<div class="docker-tools">
         <div class="task-label">Docker (advanced)</div>
-        <p class="hint muted">Save workers performs prepare/start or stop automatically. Buttons below bypass that for troubleshooting.</p>
+        <p class="hint muted">Auto-save runs prepare/start/stop.</p>
         <div class="row wrap">
           <button type="button" data-docker="prepare" data-wid="${escapeAttr(w.id)}" class="secondary">Prepare storage</button>
           <button type="button" data-docker="start" data-wid="${escapeAttr(w.id)}" class="secondary">Force start</button>
@@ -512,12 +588,13 @@ function renderWorkers(workers) {
           <button type="button" data-docker="status" data-wid="${escapeAttr(w.id)}">Status</button>
           <button type="button" data-docker="logs" data-wid="${escapeAttr(w.id)}" class="secondary">Logs</button>
         </div>
-      </div>
-      <div class="row wrap">
-        <button type="button" class="secondary" data-action="worker-delete" data-wid="${escapeAttr(w.id)}" ${w.enabled ? 'disabled="" title="Disable first"' : ""}>Delete worker</button>
-      </div>
-      <pre class="worker-docker-out preview small" data-wid="${escapeAttr(w.id)}"></pre>
-    `;
+      </div>`;
+      body += `<pre class="worker-docker-out preview small" data-wid="${escapeAttr(w.id)}"></pre>`;
+    } else {
+      body += `<p class="hint muted">Edit config to change tasks, escalation, and Docker settings.</p>`;
+    }
+
+    card.innerHTML = body;
     root.appendChild(card);
   });
 
@@ -527,11 +604,9 @@ function renderWorkers(workers) {
       const i = findWorkerIndex(wid);
       if (i < 0) return;
       const k = inp.dataset.k;
-      if (k === "enabled") workersCache[i].enabled = inp.checked;
-      else if (k === "dockerImage")
+      if (k === "dockerImage")
         workersCache[i].dockerImage = inp.value.trim() || null;
       else workersCache[i][k] = inp.value;
-      if (k === "enabled") renderWorkers(workersCache);
     });
   });
 
@@ -555,8 +630,6 @@ function renderWorkers(workers) {
   });
 }
 
-let workersCache = [];
-
 async function loadWorkers() {
   await loadLlmSources();
   workersCache = await invoke("get_workers");
@@ -565,7 +638,41 @@ async function loadWorkers() {
   });
   workersCache.forEach(ensureEnvBindings);
   workersCache.forEach(ensureHybridOptions);
+  const persistedIds = new Set(workersCache.map((w) => w.id));
+  for (const id of persistedIds) draftWorkerIds.delete(id);
+  if (expandedWorkerId && !persistedIds.has(expandedWorkerId)) expandedWorkerId = null;
+  rebuildLastPersistedSnapshots();
   renderWorkers(workersCache);
+}
+
+async function populateOllamaDefaultModelSelects() {
+  const editor = document.getElementById("llm-sources-editor");
+  if (!editor) return;
+  const cards = editor.querySelectorAll('.llm-src-card[data-kind="ollama"]');
+  for (const card of cards) {
+    const ix = Number(card.dataset.index);
+    const s = llmSourcesCache[ix];
+    const sel = card.querySelector('select[data-part="defaultModel"]');
+    if (!sel || !s || s.kind !== "ollama") continue;
+    const host = String(s.baseUrl || "").trim() || null;
+    const prev = String(s.defaultModel || "").trim();
+    try {
+      const tags = await invoke("ollama_list_models", { host });
+      let opts = "";
+      for (const t of tags) {
+        opts += `<option value="${escapeAttr(t)}"${t === prev ? " selected" : ""}>${escapeAttr(t)}</option>`;
+      }
+      if (prev && tags.indexOf(prev) === -1) {
+        opts = `<option value="${escapeAttr(prev)}" selected>${escapeAttr(prev)} (unlisted)</option>${opts}`;
+      }
+      if (!opts) opts = '<option value="">— no models —</option>';
+      sel.innerHTML = opts;
+      if (!prev && sel.options.length) sel.selectedIndex = 0;
+      if (typeof sel.value === "string") s.defaultModel = sel.value;
+    } catch {
+      sel.innerHTML = `<option value="${escapeAttr(prev)}">${escapeAttr(prev || "(enter base URL)")}</option>`;
+    }
+  }
 }
 
 function renderLlmSourcesEditor() {
@@ -583,7 +690,7 @@ function renderLlmSourcesEditor() {
           <div class="row spaced"><strong>Ollama source</strong><button type="button" class="secondary small-pad" data-remove-llm="${i}">Remove</button></div>
           <label>Name <input type="text" data-llm-kind="ollama" data-part="name" data-index="${i}" value="${escapeAttr(src.name || "")}" /></label>
           <label>Base URL <input type="text" data-part="baseUrl" data-index="${i}" value="${escapeAttr(src.baseUrl || "")}" /></label>
-          <label>Default model <input type="text" data-part="defaultModel" data-index="${i}" value="${escapeAttr(src.defaultModel || "")}" /></label>
+          <label>Default model <select data-part="defaultModel" data-index="${i}"><option value="${escapeAttr(String(src.defaultModel || ""))}">Loading…</option></select></label>
         </div>`;
       }
       if (src.kind === "cursor") {
@@ -601,6 +708,7 @@ function renderLlmSourcesEditor() {
       return "";
     })
     .join("");
+  void populateOllamaDefaultModelSelects();
 }
 
 document.getElementById("btn-llm-add-ollama")?.addEventListener("click", () => {
@@ -626,13 +734,30 @@ document.getElementById("btn-llm-add-cursor")?.addEventListener("click", () => {
 });
 
 document.getElementById("llm-sources-editor")?.addEventListener("input", (ev) => {
-  const inp = ev.target.closest("[data-part][data-index]");
+  const inp = ev.target.closest("input[data-part][data-index]");
   if (!inp) return;
   const ix = Number(inp.dataset.index);
   const part = inp.dataset.part;
   const s = llmSourcesCache[ix];
   if (!s || !part || part === "newSecretValue") return;
   s[part] = inp.value;
+});
+
+document.getElementById("llm-sources-editor")?.addEventListener("change", async (ev) => {
+  const el = ev.target.closest("[data-part][data-index]");
+  if (!el) return;
+  const ix = Number(el.dataset.index);
+  const part = el.dataset.part;
+  const s = llmSourcesCache[ix];
+  if (!s || !part || part === "newSecretValue") return;
+  if (el.tagName === "SELECT") {
+    s[part] = el.value;
+  } else if (el.tagName === "INPUT") {
+    s[part] = el.value;
+  }
+  if (s.kind === "ollama" && part === "baseUrl") {
+    await populateOllamaDefaultModelSelects();
+  }
 });
 
 document.getElementById("llm-sources-editor")?.addEventListener("click", (ev) => {
@@ -670,16 +795,13 @@ document.getElementById("btn-llm-sources-save")?.addEventListener("click", async
 });
 
 document.getElementById("workers-list").addEventListener("change", (e) => {
-  const hb = e.target.closest(".hybrid-block [data-part]");
-  if (hb) {
-    const wid = hb.dataset.wid;
-    const part = hb.dataset.part;
-    if (wid && part) {
-      if (hb.type === "checkbox") {
-        upsertHybridField(wid, part, hb.checked);
-      } else {
-        upsertHybridField(wid, part, hb.value);
-      }
+  const summaryEn = e.target.closest("[data-summary-enable]");
+  if (summaryEn) {
+    const wid = summaryEn.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      workersCache[i].enabled = summaryEn.checked;
+      void persistAllWorkers("");
     }
     return;
   }
@@ -763,14 +885,6 @@ document.getElementById("workers-list").addEventListener("change", (e) => {
 });
 
 document.getElementById("workers-list").addEventListener("input", (e) => {
-  const num = e.target.closest('.hybrid-block input[type="number"][data-part]');
-  if (num) {
-    const wid = num.dataset.wid;
-    const part = num.dataset.part;
-    if (wid && part) upsertHybridField(wid, part, num.value);
-    return;
-  }
-
   const inp = e.target.closest("input[data-env-bind]");
   if (inp) {
     const wid = inp.dataset.wid;
@@ -789,6 +903,20 @@ document.getElementById("workers-list").addEventListener("input", (e) => {
     const i = findWorkerIndex(wid);
     if (i < 0) return;
     workersCache[i].maintenanceDomain = custom.value.trim() || workersCache[i].maintenanceDomain;
+    return;
+  }
+
+  const intInp = e.target.closest("input[data-task-field='interval']");
+  if (intInp) {
+    const wid = intInp.dataset.wid;
+    const ti = Number(intInp.dataset.taskIdx);
+    const i = findWorkerIndex(wid);
+    const task = i >= 0 ? workersCache[i].tasks[ti] : null;
+    if (task && task.schedule.kind === "cadence") {
+      const v = Math.max(30, Number(intInp.value) || 3600);
+      task.schedule.intervalSeconds = v;
+      intInp.value = String(v);
+    }
   }
 });
 
@@ -804,14 +932,24 @@ document.getElementById("workers-list").addEventListener("click", async (e) => {
     return;
   }
 
-  const hy1 = t.closest("[data-action='hybrid-local-then-cursor']");
-  if (hy1) {
-    await persistAndRunHybrid(hy1.dataset.wid, false);
+  const editCfg = t.closest("[data-action='worker-edit-config']");
+  if (editCfg) {
+    const wid = editCfg.dataset.wid;
+    expandedWorkerId = expandedWorkerId === wid ? null : wid;
+    renderWorkers(workersCache);
     return;
   }
-  const hy2 = t.closest("[data-action='hybrid-cursor-only']");
-  if (hy2) {
-    await persistAndRunHybrid(hy2.dataset.wid, true);
+
+  const saveOne = t.closest("[data-action='worker-save-one']");
+  if (saveOne) {
+    await persistAllWorkers("Saved worker.");
+    return;
+  }
+
+  const discOne = t.closest("[data-action='worker-discard-one']");
+  const discNew = t.closest("[data-action='worker-discard-new']");
+  if ((discOne || discNew)?.dataset?.wid) {
+    discardWorkerDraftOrRevert((discOne || discNew).dataset.wid);
     return;
   }
 
@@ -883,15 +1021,6 @@ document.getElementById("workers-list").addEventListener("click", async (e) => {
       [ep[ix], ep[ix + 1]] = [ep[ix + 1], ep[ix]];
       renderWorkers(workersCache);
     }
-    return;
-  }
-
-  const discard = t.closest("[data-action='worker-discard']");
-  if (discard) {
-    const wid = discard.dataset.wid;
-    draftWorkerIds.delete(wid);
-    workersCache = workersCache.filter((w) => w.id !== wid);
-    renderWorkers(workersCache);
     return;
   }
 
@@ -990,40 +1119,6 @@ document.getElementById("workers-list").addEventListener("click", async (e) => {
 
 document.getElementById("btn-refresh-env").addEventListener("click", refreshEnv);
 
-document.getElementById("btn-compose-up").addEventListener("click", async () => {
-  const out = document.getElementById("compose-out");
-  out.textContent = "Running…";
-  try {
-    const text = await invoke("ollama_stack_up", { useGpu: gpuModeArg() });
-    out.textContent = text || "OK.";
-    await refreshComposeHint();
-    await refreshEnv();
-    await refreshAppLog();
-  } catch (e) {
-    out.textContent = String(e);
-  }
-});
-document.getElementById("btn-compose-down").addEventListener("click", async () => {
-  const out = document.getElementById("compose-out");
-  out.textContent = "Running…";
-  try {
-    const text = await invoke("ollama_stack_down");
-    out.textContent = text || "OK.";
-    await refreshEnv();
-    await refreshAppLog();
-  } catch (e) {
-    out.textContent = String(e);
-  }
-});
-document.getElementById("btn-compose-ps").addEventListener("click", async () => {
-  const out = document.getElementById("compose-out");
-  try {
-    out.textContent = await invoke("ollama_stack_status");
-  } catch (e) {
-    out.textContent = String(e);
-  }
-});
-
 document.getElementById("btn-secret-add").addEventListener("click", async () => {
   const keyEl = document.getElementById("secret-new-key");
   const valEl = document.getElementById("secret-new-value");
@@ -1063,27 +1158,18 @@ document.getElementById("secrets-tbody")?.addEventListener("click", async (e) =>
 document.getElementById("btn-add-worker").addEventListener("click", () => {
   const id = crypto.randomUUID();
   draftWorkerIds.add(id);
+  expandedWorkerId = id;
   workersCache.push(workerTemplate(id));
   renderWorkers(workersCache);
 });
 
-document.getElementById("btn-save-workers").addEventListener("click", async () => {
-  const msg = document.getElementById("workers-msg");
-  try {
-    msg.textContent = "Saving and applying runtime…";
-    await invoke("save_workers", { workers: workersCache });
-    msg.textContent = "Saved.";
-    draftWorkerIds.clear();
-    await loadWorkers();
-  } catch (e) {
-    msg.textContent = String(e);
-  }
-});
-
 async function resolveRestore(choice) {
   try {
-    await invoke("session_resolve_restore", { choice });
+    const res = await invoke("session_resolve_restore", { choice });
     closeModal(document.getElementById("modal-restore"));
+    if (res && res.runtimePending) {
+      setRuntimeBanner(true, "Applying worker runtime…");
+    }
     await loadWorkers();
   } catch (e) {
     window.alert(String(e));
@@ -1116,21 +1202,11 @@ document.getElementById("btn-preview-prompt").addEventListener("click", async ()
   }
 });
 
-document.getElementById("btn-list-models").addEventListener("click", async () => {
-  const host = document.getElementById("input-ollama").value.trim() || null;
-  const pre = document.getElementById("ollama-out");
-  try {
-    const tags = await invoke("ollama_list_models", { host });
-    pre.textContent = tags.join("\n");
-  } catch (e) {
-    pre.textContent = String(e);
-  }
-});
-
 document.getElementById("btn-audit-refresh").addEventListener("click", refreshAudit);
 document.getElementById("btn-app-log-refresh").addEventListener("click", refreshAppLog);
 
 async function boot() {
+  await bindRuntimeListeners().catch(() => {});
   await loadRulesDomains();
   refreshEnv();
   refreshComposeHint().catch(() => {});

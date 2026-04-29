@@ -79,13 +79,20 @@ body {
 
 .top-bar {
   display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+  padding: 1rem 0 0.75rem;
+  border-bottom: 1px solid #2a3142;
+  margin-bottom: 1rem;
+}
+
+.top-bar-row {
+  display: flex;
   flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: 0.75rem;
-  padding: 1rem 0 0.75rem;
-  border-bottom: 1px solid #2a3142;
-  margin-bottom: 1rem;
+  width: 100%;
 }
 
 .top-bar-title {
@@ -643,4 +650,96 @@ label.enable-row input[type="checkbox"] {
   width: 1rem;
   height: 1rem;
   accent-color: #2ecc71;
+}
+
+.runtime-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.65rem;
+  padding: 0.45rem 0.65rem;
+  border-radius: 6px;
+  background: #1a2740;
+  border: 1px solid #3d5a94;
+  font-size: 0.88rem;
+  color: #c6d4f2;
+}
+
+.runtime-banner.hidden {
+  display: none;
+}
+
+.runtime-banner__pulse {
+  width: 10px;
+  height: 10px;
+  border-radius: 50%;
+  background: #4a9eff;
+  animation: pulse-op 1s ease-in-out infinite;
+}
+
+@keyframes pulse-op {
+  0% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+  100% {
+    opacity: 0.35;
+    transform: scale(0.9);
+  }
+}
+
+.worker-summary {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem 0.75rem;
+}
+
+.worker-summary-meta {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.75rem;
+  min-width: 0;
+}
+
+.worker-summary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+
+.worker-summary code.wid {
+  max-width: 10rem;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.worker-detail {
+  margin-top: 0.75rem;
+  padding-top: 0.75rem;
+  border-top: 1px solid #2a3142;
+}
+
+.worker-save-row {
+  margin-top: 1rem;
+  padding-top: 0.75rem;
+  border-top: 1px dashed #394055;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+}
+
+.worker-card--collapsed .worker-detail {
+  display: none;
+}
+
+.worker-card:not(.worker-card--collapsed) .worker-detail {
+  display: block;
 }
