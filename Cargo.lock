@@ -48,6 +48,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "ai_worker_hybrid"
+version = "0.1.4"
+dependencies = [
+ "ai_worker_core",
+ "serde",
+ "serde_json",
+ "tempfile",
+ "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
 name = "ai_worker_integration"
 version = "0.1.4"
 dependencies = [
@@ -61,6 +73,7 @@ name = "ai_worker_manager"
 version = "0.1.4"
 dependencies = [
  "ai_worker_core",
+ "ai_worker_hybrid",
  "chrono",
  "dirs 5.0.1",
  "keyring",

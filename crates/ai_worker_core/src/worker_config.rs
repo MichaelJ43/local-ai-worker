@@ -32,8 +32,55 @@ pub struct WorkerDefinition {
     /// Map stored secret keys (Keychain) to container env vars, e.g. `GITHUB_TOKEN` ← `github_token`.
     #[serde(default)]
     pub env_from_secrets: Vec<EnvSecretBinding>,
+    /// Hybrid local Ollama + Cursor SDK escalation (host-side; desktop app orchestration).
+    #[serde(default)]
+    pub hybrid_options: Option<HybridOptions>,
 }
 
+/// Optional hybrid Ollama → Cursor SDK escalation parameters.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HybridOptions {
+    /// Keychain entry name storing the Cursor API token (fallback: `cursor_api_key`).
+    #[serde(default)]
+    pub cursor_secret_key: Option<String>,
+    #[serde(default)]
+    pub repo_url: Option<String>,
+    #[serde(default)]
+    pub starting_ref: Option<String>,
+    /// Host filesystem path passed to Cursor local SDK as cwd (when escalation is enabled).
+    #[serde(default)]
+    pub workspace_path: Option<String>,
+    /// When false, only the local Cursor agent is used (`local.cwd`); no cloud-hosted repo clone.
+    #[serde(default = "serde_default_true")]
+    pub allow_cloud_escalation: bool,
+    #[serde(default)]
+    pub local_phase_timeout_ms: Option<u64>,
+    #[serde(default)]
+    pub local_max_attempts: Option<u32>,
+    /// Example: `composer-2` — see Cursor SDK model list when using cloud.
+    #[serde(default)]
+    pub cursor_model_id: Option<String>,
+}
+
+fn serde_default_true() -> bool {
+    true
+}
+
+impl Default for HybridOptions {
+    fn default() -> Self {
+        Self {
+            cursor_secret_key: None,
+            repo_url: None,
+            starting_ref: None,
+            workspace_path: None,
+            allow_cloud_escalation: true,
+            local_phase_timeout_ms: None,
+            local_max_attempts: None,
+            cursor_model_id: None,
+        }
+    }
+}
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub struct EnvSecretBinding {

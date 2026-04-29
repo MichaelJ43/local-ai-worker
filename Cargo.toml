@@ -1,5 +1,5 @@
 [workspace]
-members = ["crates/ai_worker_core", "src-tauri", "test"]
+members = ["crates/ai_worker_core", "crates/ai_worker_hybrid", "src-tauri", "test"]
 resolver = "2"
 
 [workspace.package]

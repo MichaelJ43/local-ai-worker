@@ -50,6 +50,20 @@
         },
         "additionalProperties": false
       }
+    },
+    "hybridOptions": {
+      "type": ["object", "null"],
+      "properties": {
+        "cursorSecretKey": { "type": ["string", "null"] },
+        "repoUrl": { "type": ["string", "null"] },
+        "startingRef": { "type": ["string", "null"] },
+        "workspacePath": { "type": ["string", "null"] },
+        "allowCloudEscalation": { "type": "boolean" },
+        "localPhaseTimeoutMs": { "type": ["integer", "null"], "minimum": 1 },
+        "localMaxAttempts": { "type": ["integer", "null"], "minimum": 1 },
+        "cursorModelId": { "type": ["string", "null"] }
+      },
+      "additionalProperties": false
     }
   },
   "additionalProperties": false
