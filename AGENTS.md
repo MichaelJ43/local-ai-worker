@@ -104,15 +104,15 @@ Typical contents:
 
 ### Docker
 
-- **Compose:** `src-tauri/src/compose.rs` + bundled YAML in **`src-tauri/resources/compose/`** copied to app data before `docker compose`.
-- **Worker containers:** `worker_docker.rs` — `prepare_worker_storage`, `worker_start`, logs, etc. Image default `local-ai-worker-agent:latest` unless worker overrides `dockerImage`.
+- **Compose:** `src-tauri/src/compose.rs` + bundled YAML in **`src-tauri/resources/compose/`** copied to app data before `docker compose`. The app **automatically runs `compose up/down`** when persisted workers imply a loopback Ollama stack (see `persist_llm` apply-runtime), so the UI no longer exposes manual Compose actions on Overview.
+- **Worker containers:** `worker_docker.rs` — `prepare_worker_storage`, `worker_start`, logs, etc. Image default **`local-ai-worker-agent:latest`** unless a worker overrides `dockerImage`.
 
 ---
 
 ## Frontend (`src/`)
 
-- **`main.js`** — Navigation views, workers CRUD UI, hybrid escalation controls, secrets table, compose actions, modals (domain/tasks help, session restore), `invoke` wiring.
-- **`index.html`** — Shell: sidebar nav (Overview, LLM sources, Workers, Secrets, Diagnostics).
+- **`main.js`** — Navigation views, **collapsed worker cards** (summary row Enable / Edit / Remove), per-worker save/discard, LLM catalog editor (**default model dropdown** per Ollama source, populated asynchronously by `ollama_list_models`), secrets table, diagnostics, modals (domain/tasks help, session restore). **`save_workers`** and session restore **`session_resolve_restore`** return **`runtimePending`** and apply Docker/runtime in the background while the UI listens for **`runtime-phase`**, **`runtime-finished`**, and **`runtime-error`** events and shows a **`#runtime-banner`** banner.
+- **`index.html`** — Shell: sidebar nav (Overview, LLM sources, Workers, Secrets, Diagnostics), Compose stack **status hint** line on Overview.
 - **`styles.css`** — Layout and component styles.
 - **`updater.js`** — Update check scheduler + Tauri updater plugin.
 
@@ -128,7 +128,7 @@ Registered in **`src-tauri/src/lib.rs`** `generate_handler!`:
 - LLM catalog: `get_llm_sources`, `save_llm_sources` (persists **`llm_sources.json`** beside `workers.json`; migration merges legacy worker Ollama/Cursor hints)
 - Hybrid (host): `hybrid_bridge_status`, `hybrid_run_worker` (bounded local Ollama + `@cursor/sdk` via `cursor-agent-bridge`; requires Node on PATH + `npm ci` in `cursor-agent-bridge/`)
 - Secrets: `secret_keys_list`, `secret_set`, `secret_delete`, `github_token_configured`, `set_github_token`, `delete_github_token`
-- Environment: `docker_status`, `hardware_profile`, `ollama_list_models`, `ollama_stack_gpu_hint`, `ollama_stack_up` / `down` / `status`
+- Environment: `docker_status`, `hardware_profile`, `ollama_list_models`, `ollama_stack_gpu_hint` (also used by the Overview Compose status line). Host-side `ollama_stack_up` / `down` / `status` remain callable for diagnostics / automation even though the Workers UI relies on automatic stack management after saves.
 - Rules / UX: `assemble_prompt_preview`, `rules_domains_list`, `session_peek_pending_restore`, `session_resolve_restore`
 - Other: `audit_record_github`, `audit_recent_github`, `app_log_lines`, `open_external_url`
 

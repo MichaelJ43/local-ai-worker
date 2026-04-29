@@ -24,12 +24,18 @@
 
       <div class="main-column">
         <header class="top-bar">
-          <p class="top-bar-title" id="view-title">Overview</p>
-          <div class="top-bar-actions">
-            <button type="button" id="btn-check-updates" class="secondary" title="Check GitHub for updates">
-              Check for updates
-            </button>
-            <button type="button" id="btn-releases" class="secondary">Releases</button>
+          <div class="top-bar-row">
+            <p class="top-bar-title" id="view-title">Overview</p>
+            <div class="top-bar-actions">
+              <button type="button" id="btn-check-updates" class="secondary" title="Check GitHub for updates">
+                Check for updates
+              </button>
+              <button type="button" id="btn-releases" class="secondary">Releases</button>
+            </div>
+          </div>
+          <div id="runtime-banner" class="runtime-banner hidden" role="status" aria-live="polite">
+            <span class="runtime-banner__pulse" aria-hidden="true"></span>
+            <span id="runtime-banner-text"></span>
           </div>
         </header>
 
@@ -40,12 +46,13 @@
                 <h2>Environment</h2>
                 <p class="hint">Docker availability and hardware hints for model choice.</p>
                 <div id="env-status" class="status">Loading…</div>
+                <div id="compose-status-overview" class="status compact hint"></div>
                 <button type="button" id="btn-refresh-env">Refresh</button>
               </section>
               <section class="panel">
                 <h2>Quick start</h2>
                 <ol class="quick-steps">
-                  <li><strong>LLM sources</strong> — configure backends and local Compose stack.</li>
+                  <li><strong>LLM sources</strong> — add Ollama and Cursor backends; the app starts Docker Compose when you enable workers that use loopback Ollama.</li>
                   <li><strong>Secrets</strong> — store API tokens (e.g. <code>github_token</code>).</li>
                   <li><strong>Workers</strong> — configure tasks and start containers.</li>
                 </ol>
@@ -72,54 +79,20 @@
                 <button type="button" id="btn-llm-sources-save">Save LLM sources</button>
               </div>
             </section>
-            <section class="panel wide">
-              <h2>Local Ollama stack (Docker Compose)</h2>
-              <p class="hint">
-                Compose files are bundled in the app, written to your app data folder, then
-                <code>docker compose</code> is run. GPU mode adds
-                <code>ollama-compose.gpu.yml</code> (<code>gpus: all</code>). Requires Docker Desktop.
-              </p>
-              <div id="compose-hint" class="status"></div>
-              <label class="inline">
-                <span>GPU mode</span>
-                <select id="select-gpu-mode">
-                  <option value="auto">Auto (GPU if nvidia-smi works)</option>
-                  <option value="on">Force GPU</option>
-                  <option value="off">CPU only (no GPU compose override)</option>
-                </select>
-              </label>
-              <div class="row">
-                <button type="button" id="btn-compose-up">Compose up</button>
-                <button type="button" id="btn-compose-down" class="secondary">Compose down</button>
-                <button type="button" id="btn-compose-ps" class="secondary">Status (ps)</button>
-              </div>
-              <pre id="compose-out" class="preview small"></pre>
-            </section>
-            <section class="panel">
-              <h2>Ollama models</h2>
-              <label>
-                <span>Host</span>
-                <input type="text" id="input-ollama" value="http://127.0.0.1:11434" />
-              </label>
-              <button type="button" id="btn-list-models">List tags</button>
-              <pre id="ollama-out" class="preview small"></pre>
-            </section>
           </div>
 
           <div class="view" data-view="workers">
             <section class="panel wide">
               <h2>Workers</h2>
               <p class="hint">
-                Configure an <strong>escalation path</strong> (ordered tiers from LLM sources). New workers save as
-                <strong>disabled</strong>; when you enable and save, the app prepares storage and starts Docker as needed.
-                Stopping disables only removes the container (images and volumes stay). Delete removes a worker only while
-                disabled. Use Hybrid to escalate from local Ollama to Cursor SDK (needs Node +
-                <code>cursor-agent-bridge</code>).
+                Configure an <strong>escalation path</strong> (ordered tiers from LLM sources). New workers stay
+                <strong>disabled</strong> until saved. Toggle <strong>Enabled</strong> in the summary row or expand
+                <strong>Edit config</strong> to edit and save — the bundled Ollama stack starts automatically when needed.
+                Removing a worker deletes its data only while disabled.
               </p>
               <div id="workers-list" class="workers"></div>
               <div class="row">
                 <button type="button" id="btn-add-worker">Add worker</button>
-                <button type="button" id="btn-save-workers">Save workers</button>
               </div>
               <p id="workers-msg" class="status"></p>
             </section>

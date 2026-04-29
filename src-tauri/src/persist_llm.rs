@@ -8,7 +8,7 @@ use ai_worker_core::worker_config::{HybridOptions, WorkerDefinition};
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use crate::{app_dir, push_app_log, worker_docker, AppLogBuffer};
+use crate::{compose, app_dir, push_app_log, worker_docker, AppLogBuffer};
 
 pub(crate) fn llm_sources_path() -> PathBuf {
     app_dir().join("llm_sources.json")
@@ -287,6 +287,15 @@ pub(crate) fn resolve_worker_ollama_for_ops(
     })
 }
 
+fn any_enabled_worker_needs_loopback_stack(
+    workers: &[WorkerDefinition],
+    sources: &[LlmSourceDefinition],
+) -> bool {
+    workers.iter().any(|w| {
+        llm_source::enabled_worker_needs_loopback_ollama_stack(w, sources)
+    })
+}
+
 pub(crate) fn apply_runtime_after_workers_save(
     log: &AppLogBuffer,
     prev_workers: &[WorkerDefinition],
@@ -296,6 +305,10 @@ pub(crate) fn apply_runtime_after_workers_save(
 
     let prev_map: HashMap<String, WorkerDefinition> =
         prev_workers.iter().cloned().map(|w| (w.id.clone(), w)).collect();
+
+    let compose_dir = compose::ollama_compose_dir(&crate::app_dir());
+    let use_gpu = compose::resolve_use_gpu(None);
+    let mut compose_up_done = false;
 
     for idx in 0..cur.len() {
         let id = cur[idx].id.clone();
@@ -314,6 +327,22 @@ pub(crate) fn apply_runtime_after_workers_save(
         }
 
         if !was_en && now_en {
+            if llm_source::enabled_worker_needs_loopback_ollama_stack(&cur[idx], &sources)
+                && !compose_up_done
+            {
+                push_app_log(log, "ollama compose: stack up (local Ollama)…");
+                match compose::stack_up(&compose_dir, use_gpu) {
+                    Ok(out) => {
+                        push_app_log(log, format!("compose up OK: {out}"));
+                        compose_up_done = true;
+                    }
+                    Err(e) => {
+                        push_app_log(log, format!("compose up ERR {e}"));
+                        return Err(e);
+                    }
+                }
+            }
+
             let mut ollama = resolve_worker_ollama_for_ops(&cur[idx], &sources)?;
 
             let need_prep = cur[idx].context_path.is_none()
@@ -346,6 +375,18 @@ pub(crate) fn apply_runtime_after_workers_save(
                     return Err(e.to_string());
                 }
             };
+        }
+    }
+
+    let snap = crate::read_workers_disk_internal()?;
+    if !any_enabled_worker_needs_loopback_stack(&snap, &sources) {
+        push_app_log(log, "ollama compose: stack down (no enabled loopback Ollama workers)…");
+        match compose::stack_down(&compose_dir) {
+            Ok(out) => push_app_log(log, format!("compose down OK: {out}")),
+            Err(e) => {
+                push_app_log(log, format!("compose down ERR {e}"));
+                return Err(e);
+            }
         }
     }
 

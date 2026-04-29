@@ -107,6 +107,7 @@ pub enum TaskSchedule {
     OneShot,
     Cadence {
         /// Seconds between runs (simple v1 cadence).
+        #[serde(rename = "intervalSeconds", alias = "interval_seconds")]
         interval_seconds: u64,
     },
 }
