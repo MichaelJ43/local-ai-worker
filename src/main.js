@@ -34,6 +34,9 @@ const DEFAULT_AGENT_IMAGE = "local-ai-worker-agent:latest";
 /** @type {string | null} */
 let expandedWorkerId = null;
 
+/** Worker cards with Advanced section expanded (persisted across re-render). */
+const expandedAdvancedWorkerIds = new Set();
+
 /** @type {Record<string, object>} */
 let lastPersistedById = {};
 
@@ -361,6 +364,7 @@ function discardWorkerDraftOrRevert(wid) {
   if (i < 0) return;
   if (draftWorkerIds.has(wid)) {
     draftWorkerIds.delete(wid);
+    expandedAdvancedWorkerIds.delete(wid);
     if (expandedWorkerId === wid) expandedWorkerId = null;
     workersCache.splice(i, 1);
     renderWorkers(workersCache);
@@ -566,11 +570,6 @@ function renderWorkers(workers) {
         <textarea data-worker-prompt data-wid="${escapeAttr(w.id)}" rows="8" class="code">${escapeTextarea(w.workerPrompt ?? "")}</textarea>
       </label>`;
       body += escalationRowsHtml(w);
-      body += `<label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(dockerDisplay)}" placeholder="${escapeAttr(DEFAULT_AGENT_IMAGE)}" /></label>`;
-      body += `<p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>`;
-      body += `<label>Guardrail overrides (JSON object, merged into domain guardrails)
-        <textarea data-field="guardrails" data-wid="${escapeAttr(w.id)}" rows="5" class="code">${escapeTextarea(gr)}</textarea>
-      </label>`;
       body += `<div class="env-bind-block">
         <div class="env-bind-label">Secrets → container environment</div>
         <div class="env-bind-rows">
@@ -589,25 +588,42 @@ function renderWorkers(workers) {
         </div>
       </div>`;
       body += `<div class="paths hint">
-        Context: ${w.contextPath ? escapeAttr(w.contextPath) : "— (run Prepare)"}<br/>
+        Context: ${w.contextPath ? escapeAttr(w.contextPath) : "— (run Prepare under Advanced)"}<br/>
         Volume: ${w.longTermVolume ? escapeAttr(w.longTermVolume) : "—"}
       </div>`;
+
+      const advOpen = expandedAdvancedWorkerIds.has(w.id);
+      body += `<details class="worker-advanced"${advOpen ? " open" : ""} data-wid="${escapeAttr(w.id)}">
+        <summary class="worker-advanced-summary">
+          <span class="worker-advanced-summary__label">Advanced settings</span>
+          <span class="worker-advanced-switch" aria-hidden="true"><span class="worker-advanced-switch__knob"></span></span>
+        </summary>
+        <div class="worker-advanced-panel">
+          <p class="hint muted">Docker image, JSON guardrail overrides, and manual container actions (these can change runtime outside Save).</p>
+          <label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(dockerDisplay)}" placeholder="${escapeAttr(DEFAULT_AGENT_IMAGE)}" /></label>
+          <p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>
+          <label>Guardrail overrides (JSON object, merged into domain guardrails)
+            <textarea data-field="guardrails" data-wid="${escapeAttr(w.id)}" rows="5" class="code">${escapeTextarea(gr)}</textarea>
+          </label>
+          <div class="docker-tools">
+            <div class="task-label">Docker (manual)</div>
+            <p class="hint muted">Prepare/start/stop can trigger saves and compose side effects.</p>
+            <div class="row wrap">
+              <button type="button" data-docker="prepare" data-wid="${escapeAttr(w.id)}" class="secondary">Prepare storage</button>
+              <button type="button" data-docker="start" data-wid="${escapeAttr(w.id)}" class="secondary">Force start</button>
+              <button type="button" data-docker="stop" data-wid="${escapeAttr(w.id)}" class="secondary">Force stop</button>
+              <button type="button" data-docker="status" data-wid="${escapeAttr(w.id)}">Status</button>
+              <button type="button" data-docker="logs" data-wid="${escapeAttr(w.id)}" class="secondary">Logs</button>
+            </div>
+          </div>
+          <pre class="worker-docker-out preview small" data-wid="${escapeAttr(w.id)}"></pre>
+        </div>
+      </details>`;
+
       body += `<div class="worker-save-row">
         <button type="button" data-action="worker-save-one" data-wid="${escapeAttr(w.id)}">Save worker config</button>
         <button type="button" class="secondary" data-action="worker-discard-one" data-wid="${escapeAttr(w.id)}">${draftWorkerIds.has(w.id) ? "Discard new worker" : "Discard changes"}</button>
       </div></div>`;
-      body += `<div class="docker-tools">
-        <div class="task-label">Docker (advanced)</div>
-        <p class="hint muted">Auto-save runs prepare/start/stop.</p>
-        <div class="row wrap">
-          <button type="button" data-docker="prepare" data-wid="${escapeAttr(w.id)}" class="secondary">Prepare storage</button>
-          <button type="button" data-docker="start" data-wid="${escapeAttr(w.id)}" class="secondary">Force start</button>
-          <button type="button" data-docker="stop" data-wid="${escapeAttr(w.id)}" class="secondary">Force stop</button>
-          <button type="button" data-docker="status" data-wid="${escapeAttr(w.id)}">Status</button>
-          <button type="button" data-docker="logs" data-wid="${escapeAttr(w.id)}" class="secondary">Logs</button>
-        </div>
-      </div>`;
-      body += `<pre class="worker-docker-out preview small" data-wid="${escapeAttr(w.id)}"></pre>`;
     } else {
       body += `<p class="hint muted">Edit config to change tasks, escalation, and Docker settings.</p>`;
     }
@@ -659,6 +675,9 @@ async function loadWorkers() {
   const persistedIds = new Set(workersCache.map((w) => w.id));
   for (const id of persistedIds) draftWorkerIds.delete(id);
   if (expandedWorkerId && !persistedIds.has(expandedWorkerId)) expandedWorkerId = null;
+  for (const aid of [...expandedAdvancedWorkerIds]) {
+    if (!persistedIds.has(aid)) expandedAdvancedWorkerIds.delete(aid);
+  }
   rebuildLastPersistedSnapshots();
   renderWorkers(workersCache);
 }
@@ -810,6 +829,16 @@ document.getElementById("btn-llm-sources-save")?.addEventListener("click", async
   } catch (e) {
     msg.textContent = String(e);
   }
+});
+
+document.getElementById("workers-list").addEventListener("toggle", (e) => {
+  const det = e.target;
+  if (!(det instanceof HTMLDetailsElement) || !det.classList.contains("worker-advanced"))
+    return;
+  const wid = det.dataset.wid;
+  if (!wid) return;
+  if (det.open) expandedAdvancedWorkerIds.add(wid);
+  else expandedAdvancedWorkerIds.delete(wid);
 });
 
 document.getElementById("workers-list").addEventListener("change", (e) => {
@@ -1007,6 +1036,7 @@ document.getElementById("workers-list").addEventListener("click", async (e) => {
     try {
       await invoke("delete_worker", { workerId: wid });
       draftWorkerIds.delete(wid);
+      expandedAdvancedWorkerIds.delete(wid);
       await loadWorkers();
       if (msg) msg.textContent = "Worker deleted.";
     } catch (err) {

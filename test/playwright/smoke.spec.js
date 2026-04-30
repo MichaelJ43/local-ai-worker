@@ -22,4 +22,7 @@ test("workers view opens from nav with collapsed worker cards", async ({ page })
   await expect(page.locator("[data-summary-enable]").first()).toBeVisible();
   await expect(page.locator("textarea[data-worker-prompt]").first()).toBeVisible();
   await expect(page.locator("input[data-worker-repo]").first()).toBeVisible();
+  await page.locator("details.worker-advanced summary").first().click();
+  await expect(page.locator('input[data-k="dockerImage"]').first()).toBeVisible();
+  await expect(page.locator("[data-docker='prepare']").first()).toBeVisible();
 });
