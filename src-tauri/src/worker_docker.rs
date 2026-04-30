@@ -6,10 +6,12 @@ use ai_worker_core::llm_source::ResolvedWorkerOllama;
 use ai_worker_core::rules::{self, RulesTree};
 use ai_worker_core::worker_config::WorkerDefinition;
 use std::collections::HashSet;
+use std::fs::OpenOptions;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use crate::secrets;
+use crate::worker_repo_checkout;
 
 pub fn container_name_for_worker(worker_id: &str) -> String {
     let safe: String = worker_id
@@ -42,6 +44,44 @@ fn default_agent_image(worker: &WorkerDefinition) -> String {
         .clone()
         .filter(|s| !s.is_empty())
         .unwrap_or_else(|| "local-ai-worker-agent:latest".to_string())
+}
+
+fn worker_repo_url_trim(w: &WorkerDefinition) -> Option<&str> {
+    w.hybrid_options
+        .as_ref()
+        .and_then(|h| h.repo_url.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn worker_starting_ref_trim(w: &WorkerDefinition) -> Option<&str> {
+    w.hybrid_options
+        .as_ref()
+        .and_then(|h| h.starting_ref.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+}
+
+fn ensure_worker_repo_checked_out(app_root: &Path, w: &WorkerDefinition) -> Result<(), String> {
+    let Some(repo_url) = worker_repo_url_trim(w) else {
+        return Ok(());
+    };
+    let checkout = worker_repo_checkout::checkout_directory(app_root, &w.id);
+    let gh = secrets::github_token_for_container();
+    worker_repo_checkout::ensure_repo_checkout(
+        repo_url,
+        &checkout,
+        worker_starting_ref_trim(w),
+        gh.as_deref(),
+    )
+}
+
+fn repo_mount_ready(app_root: &Path, w: &WorkerDefinition) -> bool {
+    worker_repo_url_trim(w).is_some_and(|_| {
+        worker_repo_checkout::checkout_directory(app_root, &w.id)
+            .join(".git")
+            .is_dir()
+    })
 }
 
 fn docker_volume_create(name: &str) -> Result<(), String> {
@@ -83,6 +123,7 @@ pub fn prepare_worker_storage(
         .unwrap_or_else(|| default_long_term_volume_name(&w.id));
     docker_volume_create(&vol)?;
     w.long_term_volume = Some(vol);
+    ensure_worker_repo_checked_out(app_root, w)?;
     materialize_worker_runtime(app_root, w, ollama)?;
     Ok(())
 }
@@ -147,7 +188,9 @@ pub fn materialize_worker_runtime(
     let prompt_path = wid_dir.join("system-prompt.txt");
     std::fs::write(&prompt_path, full_prompt).map_err(|e| e.to_string())?;
 
-    let agent_cfg = serde_json::json!({
+    let exec_mode =
+        worker_repo_checkout::normalized_repo_execution_mode(w.repo_execution_mode.as_ref());
+    let mut agent_cfg = serde_json::json!({
         "workerId": w.id,
         "model": ollama.model_for_agent_config,
         "ollamaHost": ollama.docker_env_host,
@@ -155,6 +198,31 @@ pub fn materialize_worker_runtime(
         "pollSeconds": 45,
         "tasks": w.tasks,
     });
+    if repo_mount_ready(app_root, w) {
+        let log_path = wid_dir.join("repo-agent-runtime.log");
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&log_path)
+            .map_err(|e| format!("repo runtime log: {e}"))?;
+
+        agent_cfg["repoRoot"] = serde_json::json!("/workspace/repo");
+        agent_cfg["repoAgentEnabled"] = serde_json::json!(true);
+        agent_cfg["repoExecutionMode"] = serde_json::Value::String(exec_mode);
+        if let Some(ref profiles) = w.allowed_test_profiles {
+            if !profiles.is_empty() {
+                agent_cfg["allowedTestProfiles"] =
+                    serde_json::to_value(profiles).map_err(|e| e.to_string())?;
+            }
+        }
+        let sandbox = w
+            .repo_sandbox_policy
+            .clone()
+            .unwrap_or_default();
+        agent_cfg["sandboxPolicy"] =
+            serde_json::to_value(&sandbox).map_err(|e| e.to_string())?;
+    }
+
     std::fs::write(
         wid_dir.join("agent-config.json"),
         serde_json::to_vec_pretty(&agent_cfg).map_err(|e| e.to_string())?,
@@ -214,10 +282,14 @@ pub fn worker_start(
         .as_deref()
         .ok_or("worker has no longTermVolume — run prepare first")?;
 
+    ensure_worker_repo_checked_out(app_root, w)?;
     materialize_worker_runtime(app_root, w, ollama)?;
     AuditLog::open(audit_db).map_err(|e| e.to_string())?;
 
     let wid_dir = app_root.join("workers").join(&w.id);
+    let chk = worker_repo_checkout::checkout_directory(app_root, &w.id);
+    let exec_mode_normal =
+        worker_repo_checkout::normalized_repo_execution_mode(w.repo_execution_mode.as_ref());
     let guard_host = wid_dir.join("guardrails.effective.json");
     let prompt_host = wid_dir.join("system-prompt.txt");
     let agent_cfg_host = wid_dir.join("agent-config.json");
@@ -237,6 +309,14 @@ pub fn worker_start(
     let ollama_host = ollama.docker_env_host.clone();
     let mut cmd = Command::new("docker");
     cmd.args(["run", "-d", "--name", &cname, "--restart", "unless-stopped"]);
+    if let Some(net) = w
+        .docker_network
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty())
+    {
+        cmd.args(["--network", net]);
+    }
     cmd.args(["--add-host", "host.docker.internal:host-gateway"]);
     cmd.arg("-v").arg(format!("{}:/workspace/context.json:rw", ctx_path));
     cmd.arg("-v").arg(format!("{}:/workspace/guardrails.effective.json:ro", guard_host.display()));
@@ -252,6 +332,36 @@ pub fn worker_start(
     cmd.arg("-e").arg("AI_CONTEXT_PATH=/workspace/context.json");
     cmd.arg("-e").arg("AI_AGENT_CONFIG=/workspace/agent-config.json");
     cmd.arg("-e").arg("AI_AGENT_LOOP=1");
+    let mount_repo = repo_mount_ready(app_root, w);
+    if mount_repo {
+        let host_repo = chk
+            .canonicalize()
+            .map_err(|e| format!("repo checkout path: {e}"))?;
+        cmd.arg("-v")
+            .arg(format!("{}:/workspace/repo:rw", host_repo.display()));
+
+        let rt_log = wid_dir.join("repo-agent-runtime.log");
+        OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(&rt_log)
+            .map_err(|e| format!("repo runtime log: {e}"))?;
+        let host_rt = rt_log
+            .canonicalize()
+            .map_err(|e| format!("repo runtime log path: {e}"))?;
+        cmd.arg("-v").arg(format!(
+            "{}:/workspace/repo-runtime.log:rw",
+            host_rt.display()
+        ));
+        cmd.arg("-e")
+            .arg("AI_REPO_RUNTIME_LOG=/workspace/repo-runtime.log");
+
+        cmd.arg("-e").arg("AI_REPO_AGENT=1");
+        cmd.arg("-e").arg("REPO_ROOT=/workspace/repo");
+        cmd.arg("-e")
+            .arg(format!("REPO_EXECUTION_MODE={exec_mode_normal}"));
+        cmd.arg("-e").arg("AI_AGENT_LOOP=0");
+    }
     let secret_env = collect_container_secret_env(w)?;
     for (k, v) in secret_env {
         cmd.arg("-e").arg(format!("{k}={v}"));

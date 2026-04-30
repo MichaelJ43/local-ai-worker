@@ -1,0 +1,7 @@
+{
+  "reflection": "Repo looks clean",
+  "commands": [
+    { "argv": ["git", "status"] },
+    { "argv": ["gh", "--version"] }
+  ]
+}

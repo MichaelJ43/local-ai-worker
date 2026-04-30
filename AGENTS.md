@@ -31,7 +31,7 @@ crates/
   ai_worker_core/      # Library: rules, context, audit, docker helpers, worker_config, worker-guard binary
   ai_worker_hybrid/     # Bounded Ollama + Cursor SDK bridge types (no Tauri); used by src-tauri
 cursor-agent-bridge/   # Node: @cursor/sdk CLI (cli.mjs); npm ci here before hybrid escalation
-docker/                # Dockerfile.worker, agent-loop.sh, entrypoints, wrappers
+docker/                # Dockerfile.worker, agent-loop.sh, repo-agent-loop.sh, worker-agent-common.sh, entrypoints, git/gh wraps
 docs/                  # USER_GUIDE, COMPOSE_WORKERS, architecture, rules/rules-tree.json, schemas/
 IMPLEMENTATION_PLAN.md # Architecture notes: hybrid Ollama + Cursor SDK
 scripts/               # bump-version.mjs, inject-updater-endpoint.mjs
@@ -74,9 +74,20 @@ Typical contents:
 | `secret_keys.json` | Index of secret **names** (values in OS keychain) |
 | `pending_restore_prompt.json` | Last-exit enabled snapshot for “Welcome back” UI |
 | `audit.sqlite3` | GitHub mutation audit log |
-| `workers/<id>/` | `context.json`, materialized `guardrails.effective.json`, `system-prompt.txt`, `agent-config.json` |
+| `workers/<id>/` | `context.json`, materialized `guardrails.effective.json`, `system-prompt.txt`, `agent-config.json`; host git checkout at `checkout/` when `hybridOptions.repoUrl` is set (bind-mounted `/workspace/repo`); optional **`repo-agent-runtime.log`** (redacted one-line events alongside context) |
 
 ---
+
+### Repo-backed autonomous Docker worker (`AI_REPO_AGENT=1`)
+
+When a worker saves a non-empty **`hybridOptions.repoUrl`**, Rust **`worker_repo_checkout`** clones or syncs into **`workers/<id>/checkout`**, **`worker_docker`** bind-mounts it at **`/workspace/repo`**, and the container entrypoint runs **`docker/repo-agent-loop.sh`** instead of the legacy **`agent-loop.sh`**.
+
+- Facts for the prompt are assembled from **explicit read-only `/usr/bin/git`** commands (`status`, `diff --stat`, `log`); **`git/gh` mutation** proposals use guarded **`PATH`** wrappers (**`worker-guard`** behind **`git-wrap.sh`** / **`gh-wrap.sh`**).
+- **`repoExecutionMode`**: **`observe`** (record only); **`apply_git`** (exec **`git`** proposals only); **`apply_github`** (exec **`git` + `gh`**). Structured JSON may also include **`fileWrites`** / **`unifiedDiffs`** when enabled in **`sandboxPolicy`** (**`RepoSandboxPolicy`**, persisted + materialized).
+- Persisted **`allowedTestProfiles`** runs whitelisted **`command` + `argv`** after guarded commands each cycle when not **`observe`**.
+- **`workers/<id>/repo-agent-runtime.log`**: appended from the loop for errors / test-runner notes (patterns like tokens and embedded GitHub HTTPS credentials in URLs are stripped before persistence).
+
+Network and patch policy details: **`docs/REPO_AGENT_SANDBOX.md`**.
 
 ## Core concepts
 
@@ -90,7 +101,11 @@ Typical contents:
 - **`escalationPath`** — Ordered list of **`llm_sources.json`** tier ids for model resolution and hybrid escalation (must include at least one **Ollama** tier to enable Docker agents; Cursor-before-Ollama ordering is rejected).
 - **`tasks`** — Each has `schedule`: **`oneShot`** or **`cadence`** with **`intervalSeconds`** (see `docker/agent-loop.sh` for due logic).
 - **`envFromSecrets`** — Maps **secret key** (KV store name) → **container env var**. If `GITHUB_TOKEN` not mapped, legacy/`github_token` secret still injected when present.
-- **`hybridOptions`** — Optional host-side **bounded Ollama + Cursor SDK** escalation (see `crates/ai_worker_hybrid`, `cursor-agent-bridge/cli.mjs`). Uses keychain secret (default name `cursor_api_key`) for `CURSOR_API_KEY` when invoking Node; **`repoUrl`** here is also shown on the Workers form and echoed into **`system-prompt.txt`** for the Docker agent.
+- **`hybridOptions`** — Optional host-side **bounded Ollama + Cursor SDK** escalation (see `crates/ai_worker_hybrid`, `cursor-agent-bridge/cli.mjs`). Uses keychain secret (default name `cursor_api_key`) for `CURSOR_API_KEY` when invoking Node; **`repoUrl`** + **`startingRef`** drive host **checkout** (`workers/<id>/checkout`) mounted at **`/workspace/repo`** when the repo agent loop is enabled, and are echoed into **`system-prompt.txt`**.
+- **`repoExecutionMode`** — Autonomy tier when the repo-backed loop runs: **`observe`**, **`apply_git`**, or **`apply_github`** (see AGENTS subsection “Repo-backed autonomous”).
+- **`allowedTestProfiles`** — Optional list of **`{ command, argv }`** profiles (bare `PATH` command names) invoked from **`REPO_ROOT`** after model-proposed guarded commands each cycle (**`apply_git` / `apply_github`** only).
+- **`dockerNetwork`** — Optional **`docker run --network`** name (validated). Empty omits **`--network`** (daemon bridge). Tradeoffs (**`bridge`**, **`none`**, internal bridge) → **`docs/REPO_AGENT_SANDBOX.md`**.
+- **`repoSandboxPolicy`** — Caps and toggles for model **`fileWrites`** and **`git apply`** unified diffs; defaults disable tree mutation via those channels.
 - **`workerPrompt`** — Optional free-text block merged into **`system-prompt.txt`** after domain guardrails whenever the Docker runtime is materialized.
 - **`enabled`** — UI/scheduling intent; reopen prompt uses last saved enabled flags on app exit.
 
@@ -106,7 +121,7 @@ Typical contents:
 ### Docker
 
 - **Compose:** `src-tauri/src/compose.rs` + bundled YAML in **`src-tauri/resources/compose/`** copied to app data before `docker compose`. The app **automatically runs `compose up/down`** when persisted workers imply a loopback Ollama stack (see `persist_llm` apply-runtime), so the UI no longer exposes manual Compose actions on Overview.
-- **Worker containers:** `worker_docker.rs` — `prepare_worker_storage`, `worker_start`, logs, etc. Image default **`local-ai-worker-agent:latest`** unless a worker overrides `dockerImage`.
+- **Worker containers:** `worker_docker.rs` — `prepare_worker_storage`, `worker_start`, logs, etc. Image default **`local-ai-worker-agent:latest`** unless a worker overrides `dockerImage`. **`docker/entrypoint.sh`** copies **`GITHUB_TOKEN` → `GH_TOKEN`** (when set) and fixes **`GH_CONFIG_DIR`** to an ephemeral directory so **`gh`** uses the PAT in the environment—not interactive login or disk hosts.
 
 ---
 
@@ -145,6 +160,7 @@ Adding a command: implement in `lib.rs` (or module), register in `generate_handl
 | `cargo clippy --workspace -- -D warnings` | Lint (CI uses this) |
 | `npm run build` | Vite production build |
 | `npm run test:e2e` | Playwright against built preview |
+| `bash test/scripts/repo_agent_fixture_test.sh` (or `npm run test:fixtures`) | Validates repo-agent JSON fixtures with `jq` |
 
 CI path filters (`.github/workflows/ci.yml`): changes under `src/`, `playwright`, `src-tauri`, `crates`, etc., gate relevant jobs.
 

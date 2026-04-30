@@ -284,6 +284,10 @@ function workerTemplate(id) {
     envFromSecrets: [],
     hybridOptions: null,
     workerPrompt: null,
+    repoExecutionMode: "observe",
+    allowedTestProfiles: null,
+    dockerNetwork: null,
+    repoSandboxPolicy: null,
   };
 }
 
@@ -387,6 +391,85 @@ function ensureEnvBindings(w) {
   if (!Array.isArray(w.envFromSecrets)) w.envFromSecrets = [];
 }
 
+function normalizeRepoExecMode(raw) {
+  const t = String(raw ?? "").trim();
+  if (t === "apply_git" || t === "apply_github") return t;
+  return "observe";
+}
+
+/** Coalesce allowed test-runner profiles saved on disk. */
+function ensureWorkerAllowedTestProfiles(w) {
+  const p = w.allowedTestProfiles;
+  if (p == null) return;
+  if (!Array.isArray(p)) {
+    w.allowedTestProfiles = null;
+    return;
+  }
+  w.allowedTestProfiles = p
+    .filter((x) => x && typeof x === "object")
+    .map((x) => ({
+      command: String(x.command ?? "").trim(),
+      argv: Array.isArray(x.argv) ? x.argv.map((a) => String(a)) : [],
+    }))
+    .filter((x) => x.command.length > 0);
+  if (w.allowedTestProfiles.length === 0) w.allowedTestProfiles = null;
+}
+
+function stringifyAllowedTestProfiles(w) {
+  if (!Array.isArray(w.allowedTestProfiles) || w.allowedTestProfiles.length === 0) {
+    return '[\n  { "command": "npm", "argv": ["test"] }\n]\n';
+  }
+  try {
+    return JSON.stringify(w.allowedTestProfiles, null, 2);
+  } catch {
+    return "[\n]\n";
+  }
+}
+
+function defaultRepoSandboxObject() {
+  return {
+    fileWritesEnabled: false,
+    applyUnifiedDiffsEnabled: false,
+    patchMaxFileBytes: 393216,
+    patchMaxTotalBytes: 3145728,
+    patchMaxUnifiedDiffBytes: 1048576,
+    allowGitInternalsWrites: false,
+  };
+}
+
+function stringifyRepoSandboxPolicy(w) {
+  const o =
+    w.repoSandboxPolicy &&
+    typeof w.repoSandboxPolicy === "object" &&
+    !Array.isArray(w.repoSandboxPolicy)
+      ? w.repoSandboxPolicy
+      : defaultRepoSandboxObject();
+  try {
+    return JSON.stringify(o, null, 2);
+  } catch {
+    return JSON.stringify(defaultRepoSandboxObject(), null, 2);
+  }
+}
+
+function ensureRepoSandboxShape(w) {
+  const p = w.repoSandboxPolicy;
+  if (
+    p !== null &&
+    typeof p === "object" &&
+    !Array.isArray(p)
+  ) {
+    return;
+  }
+  w.repoSandboxPolicy = null;
+}
+
+/** Normalize repo execution tier for editor + JSON schema. */
+function ensureWorkerDefaults(w) {
+  w.repoExecutionMode = normalizeRepoExecMode(w.repoExecutionMode);
+  ensureWorkerAllowedTestProfiles(w);
+  ensureRepoSandboxShape(w);
+}
+
 /** Default hybrid options mirror Rust `HybridOptions`. */
 function defaultHybridOptions() {
   return {
@@ -484,6 +567,7 @@ function renderWorkers(workers) {
   workers.forEach((w) => {
     ensureEnvBindings(w);
     ensureHybridOptions(w);
+    ensureWorkerDefaults(w);
     const gr =
       w.guardrailOverrides != null
         ? JSON.stringify(w.guardrailOverrides, null, 2)
@@ -562,8 +646,13 @@ function renderWorkers(workers) {
       body += domainSelectHtml(w);
       ensureHybridOptions(w);
       const repoDisp = String(w.hybridOptions?.repoUrl ?? "").trim();
+      const refDisp = String(w.hybridOptions?.startingRef ?? "").trim();
+      const execDisp = normalizeRepoExecMode(w.repoExecutionMode);
       body += `<label>GitHub repository URL
         <input type="text" autocomplete="off" data-worker-repo data-wid="${escapeAttr(w.id)}" value="${escapeAttr(repoDisp)}" placeholder="https://github.com/org/repo" />
+      </label>
+      <label>Starting branch or ref <span class="hint block">Clone/checkout hint (branch name, tag, or commit-ish).</span>
+        <input type="text" autocomplete="off" data-worker-starting-ref data-wid="${escapeAttr(w.id)}" value="${escapeAttr(refDisp)}" placeholder="main" />
       </label>
       <label>Worker prompt
         <span class="hint block">Merged into <code>system-prompt.txt</code> when runtime is prepared (after domain guardrails).</span>
@@ -589,7 +678,7 @@ function renderWorkers(workers) {
       </div>`;
       body += `<div class="paths hint">
         Context: ${w.contextPath ? escapeAttr(w.contextPath) : "— (run Prepare under Advanced)"}<br/>
-        Volume: ${w.longTermVolume ? escapeAttr(w.longTermVolume) : "—"}
+        Volume: ${w.longTermVolume ? escapeAttr(w.longTermVolume) : "—"}${repoDisp ? `<br/><span class="muted">With a repo URL configured, diagnostics also append to <code>repo-agent-runtime.log</code> beside the files above.</span>` : ""}
       </div>`;
 
       const advOpen = expandedAdvancedWorkerIds.has(w.id);
@@ -600,6 +689,26 @@ function renderWorkers(workers) {
         </summary>
         <div class="worker-advanced-panel">
           <p class="hint muted">Docker image, JSON guardrail overrides, and manual container actions (these can change runtime outside Save).</p>
+          <label>Repo autonomous execution tier
+            <span class="hint block"><code>observe</code> — propose only.<br/><code>apply_git</code> — run model-proposed <code>git</code> through guarded wrappers (<code>gh</code> skipped).<br/><code>apply_github</code> — run guarded <code>git</code> and <code>gh</code> proposals.</span>
+            <select data-repo-exec-mode data-wid="${escapeAttr(w.id)}">
+              <option value="observe" ${execDisp === "observe" ? 'selected=""' : ""}>observe</option>
+              <option value="apply_git" ${execDisp === "apply_git" ? 'selected=""' : ""}>apply_git</option>
+              <option value="apply_github" ${execDisp === "apply_github" ? 'selected=""' : ""}>apply_github</option>
+            </select>
+          </label>
+          <label>Allowed test profiles (JSON)
+            <span class="hint block">Optional array executed from <code>REPO_ROOT</code> each repo cycle after model commands — only when tier is <code>apply_git</code> or <code>apply_github</code>. Each object uses <code>command</code> (bare PATH name only) and <code>argv</code> (string array). Example: <code>npm</code> with argv <code>run</code>, <code>test</code>. Install tools in your custom Docker image if needed.</span>
+            <textarea data-allowed-test-profiles data-wid="${escapeAttr(w.id)}" rows="5" class="code">${escapeTextarea(stringifyAllowedTestProfiles(w))}</textarea>
+          </label>
+          <label>Docker network (optional <code>--network</code>)
+            <span class="hint block">Docker network name (<code>bridge</code>, <code>none</code>, or a network you created). Defaults to Docker daemon default if empty. Tradeoffs in <code>docs/REPO_AGENT_SANDBOX.md</code>.</span>
+            <input type="text" data-k="dockerNetwork" data-wid="${escapeAttr(w.id)}" value="${escapeAttr(w.dockerNetwork ?? "")}" placeholder="(default bridge)" autocomplete="off" />
+          </label>
+          <label>Repo sandbox policy (JSON)
+            <span class="hint block">Controls model <code>fileWrites</code> and <code>unifiedDiffs</code>. Turn on <code>fileWritesEnabled</code> or <code>applyUnifiedDiffsEnabled</code> only for experimental runs. Bounds: <code>patchMax*</code> bytes.</span>
+            <textarea data-repo-sandbox-policy data-wid="${escapeAttr(w.id)}" rows="6" class="code">${escapeTextarea(stringifyRepoSandboxPolicy(w))}</textarea>
+          </label>
           <label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(dockerDisplay)}" placeholder="${escapeAttr(DEFAULT_AGENT_IMAGE)}" /></label>
           <p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>
           <label>Guardrail overrides (JSON object, merged into domain guardrails)
@@ -640,6 +749,8 @@ function renderWorkers(workers) {
       const k = inp.dataset.k;
       if (k === "dockerImage")
         workersCache[i].dockerImage = inp.value.trim() || null;
+      else if (k === "dockerNetwork")
+        workersCache[i].dockerNetwork = inp.value.trim() || null;
       else workersCache[i][k] = inp.value;
     });
   });
@@ -672,6 +783,7 @@ async function loadWorkers() {
   });
   workersCache.forEach(ensureEnvBindings);
   workersCache.forEach(ensureHybridOptions);
+  workersCache.forEach(ensureWorkerDefaults);
   const persistedIds = new Set(workersCache.map((w) => w.id));
   for (const id of persistedIds) draftWorkerIds.delete(id);
   if (expandedWorkerId && !persistedIds.has(expandedWorkerId)) expandedWorkerId = null;
@@ -853,6 +965,14 @@ document.getElementById("workers-list").addEventListener("change", (e) => {
     return;
   }
 
+  const repoExecSel = e.target.closest("select[data-repo-exec-mode]");
+  if (repoExecSel) {
+    const wid = repoExecSel.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) workersCache[i].repoExecutionMode = normalizeRepoExecMode(repoExecSel.value);
+    return;
+  }
+
   const tierSel = e.target.closest("select[data-field='tier']");
   if (tierSel) {
     const wid = tierSel.dataset.wid;
@@ -932,6 +1052,59 @@ document.getElementById("workers-list").addEventListener("change", (e) => {
 });
 
 document.getElementById("workers-list").addEventListener("input", (e) => {
+  const rsp = e.target.closest("textarea[data-repo-sandbox-policy]");
+  if (rsp) {
+    const wid = rsp.dataset.wid;
+    const i = findWorkerIndex(wid);
+    const msg = document.getElementById("workers-msg");
+    if (i >= 0) {
+      const raw = rsp.value.trim();
+      if (!raw) {
+        workersCache[i].repoSandboxPolicy = null;
+        if (msg) msg.textContent = "";
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        if (typeof parsed === "object" && parsed !== null && !Array.isArray(parsed)) {
+          workersCache[i].repoSandboxPolicy = parsed;
+          ensureRepoSandboxShape(workersCache[i]);
+        } else {
+          workersCache[i].repoSandboxPolicy = null;
+        }
+        if (msg) msg.textContent = "";
+      } catch (err) {
+        if (msg)
+          msg.textContent = `Sandbox policy: invalid JSON — ${String(err.message || err)}`;
+      }
+    }
+    return;
+  }
+
+  const atp = e.target.closest("textarea[data-allowed-test-profiles]");
+  if (atp) {
+    const wid = atp.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      const raw = atp.value.trim();
+      const msg = document.getElementById("workers-msg");
+      if (!raw) {
+        workersCache[i].allowedTestProfiles = null;
+        if (msg) msg.textContent = "";
+        return;
+      }
+      try {
+        const parsed = JSON.parse(raw);
+        workersCache[i].allowedTestProfiles = Array.isArray(parsed) ? parsed : null;
+        ensureWorkerAllowedTestProfiles(workersCache[i]);
+        if (msg) msg.textContent = "";
+      } catch (err) {
+        if (msg) msg.textContent = `Allowed test profiles: invalid JSON — ${String(err.message || err)}`;
+      }
+    }
+    return;
+  }
+
   const wp = e.target.closest("textarea[data-worker-prompt]");
   if (wp) {
     const wid = wp.dataset.wid;
@@ -951,6 +1124,18 @@ document.getElementById("workers-list").addEventListener("input", (e) => {
       ensureHybridOptions(workersCache[i]);
       const t = wrepo.value.trim();
       workersCache[i].hybridOptions.repoUrl = t || null;
+    }
+    return;
+  }
+
+  const wsref = e.target.closest("input[data-worker-starting-ref]");
+  if (wsref) {
+    const wid = wsref.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      ensureHybridOptions(workersCache[i]);
+      const t = wsref.value.trim();
+      workersCache[i].hybridOptions.startingRef = t || null;
     }
     return;
   }
