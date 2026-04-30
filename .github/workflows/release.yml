@@ -34,6 +34,14 @@ jobs:
         with:
           ref: ${{ github.event.inputs.tag }}
 
+      - name: Default worker agent image (GHCR, matches app release)
+        shell: bash
+        run: |
+          OWNER=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
+          TAG="${{ github.event.inputs.tag }}"
+          VER="${TAG#v}"
+          echo "LOCAL_AI_DEFAULT_WORKER_AGENT_IMAGE=ghcr.io/${OWNER}/local-ai-worker-agent:${VER}" >> "$GITHUB_ENV"
+
       - uses: actions/setup-node@v4
         with:
           node-version: "20"

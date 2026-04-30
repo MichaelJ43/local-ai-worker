@@ -1,0 +1,84 @@
+# Build and push the worker agent image to GitHub Container Registry.
+# Tags: semver from Cargo workspace (matches app version) and :latest.
+
+name: Worker agent image
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "docker/**"
+      - "crates/ai_worker_core/**"
+      - "docs/rules/rules-tree.json"
+      - ".github/workflows/worker-agent-image.yml"
+  workflow_dispatch:
+  release:
+    types: [published]
+
+permissions:
+  contents: read
+  packages: write
+
+env:
+  IMAGE_NAME: local-ai-worker-agent
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event_name == 'release' && github.event.release.tag_name || github.sha }}
+
+      - name: Image version (Cargo workspace or release tag)
+        id: ver
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [ "${{ github.event_name }}" = "release" ]; then
+            TAG="${{ github.event.release.tag_name }}"
+            VERSION="${TAG#v}"
+          else
+            VERSION="$(
+              awk '
+                /^\[workspace\.package\]/ { inws=1; next }
+                inws && /^version = / {
+                  gsub(/^version = "|".*$/, "", $0)
+                  print
+                  exit
+                }
+              ' Cargo.toml
+            )"
+          fi
+          if [ -z "${VERSION}" ]; then
+            echo "Could not resolve image semver" >&2
+            exit 1
+          fi
+          echo "version=${VERSION}" >> "${GITHUB_OUTPUT}"
+          echo "Publishing version: ${VERSION}"
+
+      - name: Lowercase owner for GHCR
+        id: own
+        run: echo "owner=$(echo '${{ github.repository_owner }}' | tr '[:upper:]' '[:lower:]')" >> "${GITHUB_OUTPUT}"
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          file: docker/Dockerfile.worker
+          push: true
+          tags: |
+            ghcr.io/${{ steps.own.outputs.owner }}/${{ env.IMAGE_NAME }}:${{ steps.ver.outputs.version }}
+            ghcr.io/${{ steps.own.outputs.owner }}/${{ env.IMAGE_NAME }}:latest
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
