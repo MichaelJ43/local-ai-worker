@@ -90,7 +90,8 @@ Typical contents:
 - **`escalationPath`** — Ordered list of **`llm_sources.json`** tier ids for model resolution and hybrid escalation (must include at least one **Ollama** tier to enable Docker agents; Cursor-before-Ollama ordering is rejected).
 - **`tasks`** — Each has `schedule`: **`oneShot`** or **`cadence`** with **`intervalSeconds`** (see `docker/agent-loop.sh` for due logic).
 - **`envFromSecrets`** — Maps **secret key** (KV store name) → **container env var**. If `GITHUB_TOKEN` not mapped, legacy/`github_token` secret still injected when present.
-- **`hybridOptions`** — Optional host-side **bounded Ollama + Cursor SDK** escalation (see `crates/ai_worker_hybrid`, `cursor-agent-bridge/cli.mjs`). Uses keychain secret (default name `cursor_api_key`) for `CURSOR_API_KEY` when invoking Node.
+- **`hybridOptions`** — Optional host-side **bounded Ollama + Cursor SDK** escalation (see `crates/ai_worker_hybrid`, `cursor-agent-bridge/cli.mjs`). Uses keychain secret (default name `cursor_api_key`) for `CURSOR_API_KEY` when invoking Node; **`repoUrl`** here is also shown on the Workers form and echoed into **`system-prompt.txt`** for the Docker agent.
+- **`workerPrompt`** — Optional free-text block merged into **`system-prompt.txt`** after domain guardrails whenever the Docker runtime is materialized.
 - **`enabled`** — UI/scheduling intent; reopen prompt uses last saved enabled flags on app exit.
 
 ### Secrets

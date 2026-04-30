@@ -55,6 +55,7 @@
         "additionalProperties": false
       }
     },
+    "workerPrompt": { "type": ["string", "null"] },
     "hybridOptions": {
       "type": ["object", "null"],
       "properties": {

@@ -20,4 +20,6 @@ test("workers view opens from nav with collapsed worker cards", async ({ page })
   await page.getByRole("button", { name: "Add worker" }).click();
   await expect(page.locator("[data-action='worker-edit-config']").first()).toBeVisible();
   await expect(page.locator("[data-summary-enable]").first()).toBeVisible();
+  await expect(page.locator("textarea[data-worker-prompt]").first()).toBeVisible();
+  await expect(page.locator("input[data-worker-repo]").first()).toBeVisible();
 });

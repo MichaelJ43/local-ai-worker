@@ -40,6 +40,9 @@ pub struct WorkerDefinition {
     /// Hybrid local Ollama + Cursor SDK escalation (host-side; desktop app orchestration).
     #[serde(default)]
     pub hybrid_options: Option<HybridOptions>,
+    /// Extra instructions merged into `system-prompt.txt` after domain rules when the Docker runtime is materialized.
+    #[serde(default)]
+    pub worker_prompt: Option<String>,
 }
 
 /// Optional hybrid Ollama → Cursor SDK escalation parameters.

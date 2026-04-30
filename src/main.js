@@ -115,6 +115,14 @@ function normalizeWorkerForSave(w) {
   if (!w.dockerImage || !String(w.dockerImage).trim()) {
     w.dockerImage = DEFAULT_AGENT_IMAGE;
   }
+  if (w.workerPrompt != null) {
+    const t = String(w.workerPrompt).trim();
+    w.workerPrompt = t || null;
+  }
+  if (w.hybridOptions && typeof w.hybridOptions === "object") {
+    const r = w.hybridOptions.repoUrl;
+    if (r != null && !String(r).trim()) w.hybridOptions.repoUrl = null;
+  }
 }
 
 function normalizeAllWorkersForSave() {
@@ -272,6 +280,7 @@ function workerTemplate(id) {
     dockerImage: DEFAULT_AGENT_IMAGE,
     envFromSecrets: [],
     hybridOptions: null,
+    workerPrompt: null,
   };
 }
 
@@ -547,6 +556,15 @@ function renderWorkers(workers) {
     if (expanded) {
       body += `<div class="worker-detail"><label>Name <input data-k="name" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(w.name)}" /></label>`;
       body += domainSelectHtml(w);
+      ensureHybridOptions(w);
+      const repoDisp = String(w.hybridOptions?.repoUrl ?? "").trim();
+      body += `<label>GitHub repository URL
+        <input type="text" autocomplete="off" data-worker-repo data-wid="${escapeAttr(w.id)}" value="${escapeAttr(repoDisp)}" placeholder="https://github.com/org/repo" />
+      </label>
+      <label>Worker prompt
+        <span class="hint block">Merged into <code>system-prompt.txt</code> when runtime is prepared (after domain guardrails).</span>
+        <textarea data-worker-prompt data-wid="${escapeAttr(w.id)}" rows="8" class="code">${escapeTextarea(w.workerPrompt ?? "")}</textarea>
+      </label>`;
       body += escalationRowsHtml(w);
       body += `<label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(dockerDisplay)}" placeholder="${escapeAttr(DEFAULT_AGENT_IMAGE)}" /></label>`;
       body += `<p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>`;
@@ -885,6 +903,29 @@ document.getElementById("workers-list").addEventListener("change", (e) => {
 });
 
 document.getElementById("workers-list").addEventListener("input", (e) => {
+  const wp = e.target.closest("textarea[data-worker-prompt]");
+  if (wp) {
+    const wid = wp.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      const t = wp.value.trim();
+      workersCache[i].workerPrompt = t ? t : null;
+    }
+    return;
+  }
+
+  const wrepo = e.target.closest("input[data-worker-repo]");
+  if (wrepo) {
+    const wid = wrepo.dataset.wid;
+    const i = findWorkerIndex(wid);
+    if (i >= 0) {
+      ensureHybridOptions(workersCache[i]);
+      const t = wrepo.value.trim();
+      workersCache[i].hybridOptions.repoUrl = t || null;
+    }
+    return;
+  }
+
   const inp = e.target.closest("input[data-env-bind]");
   if (inp) {
     const wid = inp.dataset.wid;
