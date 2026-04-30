@@ -13,6 +13,79 @@ use std::process::Command;
 use crate::secrets;
 use crate::worker_repo_checkout;
 
+/// Format an absolute host path for `docker run -v HOST:DESTDIR:OPTS`.
+///
+/// Docker splits on `:`. Standard Windows paths (`C:\...` and extended `\\?\C:\...`)
+/// introduce extra colons and break parsing ("too many colons"). Translate to `/c/...`
+/// and `//server/share/...` forms that Docker Desktop accepts for Linux containers.
+fn docker_bind_host_path(path: &Path) -> Result<String, String> {
+    #[cfg(not(windows))]
+    {
+        let canon = path
+            .canonicalize()
+            .map_err(|e| format!("{}: {e}", path.display()))?;
+        Ok(canon.to_string_lossy().into_owned())
+    }
+    #[cfg(windows)]
+    {
+        docker_bind_host_path_windows(path)
+    }
+}
+
+#[cfg(windows)]
+fn docker_bind_host_path_windows(path: &Path) -> Result<String, String> {
+    use std::path::{Component, Prefix};
+
+    let canon = path
+        .canonicalize()
+        .map_err(|e| format!("{}: {e}", path.display()))?;
+    fn push_normals(mut it: impl Iterator<Item = Component<'_>>, mut buf: String) -> String {
+        while let Some(c) = it.next() {
+            match c {
+                Component::Normal(os) => {
+                    buf.push('/');
+                    buf.push_str(&os.to_string_lossy());
+                }
+                Component::RootDir => {}
+                _ => {}
+            }
+        }
+        buf
+    }
+
+    let mut it = canon.components();
+    match it.next() {
+        Some(Component::Prefix(p)) => match p.kind() {
+            Prefix::Disk(byte) | Prefix::VerbatimDisk(byte) => {
+                let letter = (*byte as char).to_ascii_lowercase();
+                if matches!(it.as_path().components().next(), Some(Component::RootDir)) {
+                    it.next();
+                }
+                Ok(push_normals(it, format!("/{letter}")))
+            }
+            Prefix::UNC(server, share) | Prefix::VerbatimUNC(server, share) => {
+                let buf = format!(
+                    "//{}/{}",
+                    server.to_string_lossy(),
+                    share.to_string_lossy()
+                );
+                if matches!(it.as_path().components().next(), Some(Component::RootDir)) {
+                    it.next();
+                }
+                Ok(push_normals(it, buf))
+            }
+            _ => Err(format!(
+                "cannot bind-mount path for Docker (unsupported prefix): {}",
+                canon.display()
+            )),
+        },
+        _ => Err(format!(
+            "cannot bind-mount path for Docker (expected absolute host path): {}",
+            canon.display()
+        )),
+    }
+}
+
 pub fn container_name_for_worker(worker_id: &str) -> String {
     let safe: String = worker_id
         .chars()
@@ -368,9 +441,11 @@ pub fn worker_start(
     let guard_host = wid_dir.join("guardrails.effective.json");
     let prompt_host = wid_dir.join("system-prompt.txt");
     let agent_cfg_host = wid_dir.join("agent-config.json");
-    let audit_host = audit_db
-        .canonicalize()
-        .map_err(|e| format!("audit db path: {e}"))?;
+    let ctx_host = docker_bind_host_path(Path::new(ctx_path))?;
+    let guard_host_m = docker_bind_host_path(&guard_host)?;
+    let prompt_host_m = docker_bind_host_path(&prompt_host)?;
+    let agent_cfg_host_m = docker_bind_host_path(&agent_cfg_host)?;
+    let audit_host_m = docker_bind_host_path(audit_db)?;
 
     let cname = container_name_for_worker(&w.id);
     let requested = resolved_agent_image(w);
@@ -394,11 +469,24 @@ pub fn worker_start(
         cmd.args(["--network", net]);
     }
     cmd.args(["--add-host", "host.docker.internal:host-gateway"]);
-    cmd.arg("-v").arg(format!("{}:/workspace/context.json:rw", ctx_path));
-    cmd.arg("-v").arg(format!("{}:/workspace/guardrails.effective.json:ro", guard_host.display()));
-    cmd.arg("-v").arg(format!("{}:/workspace/system-prompt.txt:ro", prompt_host.display()));
-    cmd.arg("-v").arg(format!("{}:/workspace/agent-config.json:ro", agent_cfg_host.display()));
-    cmd.arg("-v").arg(format!("{}:/persist/audit.sqlite3:rw", audit_host.display()));
+    cmd.arg("-v")
+        .arg(format!("{}:/workspace/context.json:rw", ctx_host));
+    cmd.arg("-v").arg(format!(
+        "{}:/workspace/guardrails.effective.json:ro",
+        guard_host_m
+    ));
+    cmd.arg("-v").arg(format!(
+        "{}:/workspace/system-prompt.txt:ro",
+        prompt_host_m
+    ));
+    cmd.arg("-v").arg(format!(
+        "{}:/workspace/agent-config.json:ro",
+        agent_cfg_host_m
+    ));
+    cmd.arg("-v").arg(format!(
+        "{}:/persist/audit.sqlite3:rw",
+        audit_host_m
+    ));
     cmd.arg("-v").arg(format!("{}:/persist", vol));
     cmd.args(["-w", "/workspace"]);
     cmd.args(["-e", &format!("OLLAMA_HOST={ollama_host}")]);
@@ -410,11 +498,10 @@ pub fn worker_start(
     cmd.arg("-e").arg("AI_AGENT_LOOP=1");
     let mount_repo = repo_mount_ready(app_root, w);
     if mount_repo {
-        let host_repo = chk
-            .canonicalize()
-            .map_err(|e| format!("repo checkout path: {e}"))?;
+        let host_repo_m =
+            docker_bind_host_path(&chk).map_err(|e| format!("repo checkout path: {e}"))?;
         cmd.arg("-v")
-            .arg(format!("{}:/workspace/repo:rw", host_repo.display()));
+            .arg(format!("{}:/workspace/repo:rw", host_repo_m));
 
         let rt_log = wid_dir.join("repo-agent-runtime.log");
         OpenOptions::new()
@@ -422,12 +509,11 @@ pub fn worker_start(
             .append(true)
             .open(&rt_log)
             .map_err(|e| format!("repo runtime log: {e}"))?;
-        let host_rt = rt_log
-            .canonicalize()
+        let host_rt_m = docker_bind_host_path(&rt_log)
             .map_err(|e| format!("repo runtime log path: {e}"))?;
         cmd.arg("-v").arg(format!(
             "{}:/workspace/repo-runtime.log:rw",
-            host_rt.display()
+            host_rt_m
         ));
         cmd.arg("-e")
             .arg("AI_REPO_RUNTIME_LOG=/workspace/repo-runtime.log");
