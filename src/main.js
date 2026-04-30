@@ -29,7 +29,8 @@ async function loadLlmSources() {
 let domainsCache = [];
 const draftWorkerIds = new Set();
 
-const DEFAULT_AGENT_IMAGE = "local-ai-worker-agent:latest";
+/** Bundled default Docker image for new workers; set in boot() from the Rust backend. */
+let bundledDefaultWorkerImage = "local-ai-worker-agent:latest";
 
 /** @type {string | null} */
 let expandedWorkerId = null;
@@ -116,7 +117,7 @@ function normalizeWorkerForSave(w) {
     }
   }
   if (!w.dockerImage || !String(w.dockerImage).trim()) {
-    w.dockerImage = DEFAULT_AGENT_IMAGE;
+    w.dockerImage = bundledDefaultWorkerImage;
   }
   if (w.workerPrompt != null) {
     const t = String(w.workerPrompt).trim();
@@ -280,7 +281,7 @@ function workerTemplate(id) {
     guardrailOverrides: null,
     contextPath: null,
     longTermVolume: null,
-    dockerImage: DEFAULT_AGENT_IMAGE,
+    dockerImage: bundledDefaultWorkerImage,
     envFromSecrets: [],
     hybridOptions: null,
     workerPrompt: null,
@@ -611,7 +612,7 @@ function renderWorkers(workers) {
     const dockerDisplay =
       w.dockerImage && String(w.dockerImage).trim()
         ? String(w.dockerImage).trim()
-        : DEFAULT_AGENT_IMAGE;
+        : bundledDefaultWorkerImage;
 
     const card = document.createElement("div");
     card.className = [
@@ -709,7 +710,7 @@ function renderWorkers(workers) {
             <span class="hint block">Controls model <code>fileWrites</code> and <code>unifiedDiffs</code>. Turn on <code>fileWritesEnabled</code> or <code>applyUnifiedDiffsEnabled</code> only for experimental runs. Bounds: <code>patchMax*</code> bytes.</span>
             <textarea data-repo-sandbox-policy data-wid="${escapeAttr(w.id)}" rows="6" class="code">${escapeTextarea(stringifyRepoSandboxPolicy(w))}</textarea>
           </label>
-          <label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(dockerDisplay)}" placeholder="${escapeAttr(DEFAULT_AGENT_IMAGE)}" /></label>
+          <label>Docker image <input data-k="dockerImage" data-wid="${escapeAttr(w.id)}" type="text" value="${escapeAttr(dockerDisplay)}" placeholder="${escapeAttr(bundledDefaultWorkerImage)}" /></label>
           <p data-worker-lifecycle-msg class="muted" data-wid="${escapeAttr(w.id)}"></p>
           <label>Guardrail overrides (JSON object, merged into domain guardrails)
             <textarea data-field="guardrails" data-wid="${escapeAttr(w.id)}" rows="5" class="code">${escapeTextarea(gr)}</textarea>
@@ -1463,6 +1464,19 @@ document.getElementById("btn-app-log-refresh").addEventListener("click", refresh
 
 async function boot() {
   await bindRuntimeListeners().catch(() => {});
+  try {
+    bundledDefaultWorkerImage = await invoke("default_worker_agent_image");
+  } catch {
+    /* non-Tauri or backend error: keep dev fallback */
+  }
+  const refreshAgentImages = () =>
+    invoke("worker_registry_images_refresh").catch(() => {});
+  void refreshAgentImages();
+  const agentImageRefreshMs = 6 * 60 * 60 * 1000;
+  window.setInterval(() => {
+    void refreshAgentImages();
+  }, agentImageRefreshMs);
+
   await loadRulesDomains();
   refreshEnv();
   refreshComposeHint().catch(() => {});

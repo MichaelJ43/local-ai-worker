@@ -17,7 +17,7 @@ use ai_worker_core::{
     worker_config::WorkerDefinition,
 };
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex};
 use tauri::Emitter;
@@ -203,6 +203,38 @@ fn delete_worker(worker_id: String) -> Result<(), String> {
     let victim = all.remove(idx);
     write_workers_with_llm(&all, &catalog)?;
     worker_docker::worker_teardown_all(&app_dir(), &victim)
+}
+
+#[tauri::command]
+fn default_worker_agent_image() -> String {
+    worker_docker::bundled_default_agent_image().to_string()
+}
+
+#[tauri::command]
+fn worker_registry_images_refresh(log: tauri::State<AppLogBuffer>) -> Result<Vec<String>, String> {
+    persist_llm::ensure_migration()?;
+    let workers = read_workers_disk_internal()?;
+    let mut refs = HashSet::<String>::new();
+    refs.insert(worker_docker::bundled_default_agent_image().to_string());
+    for w in &workers {
+        refs.insert(worker_docker::resolved_agent_image(w));
+    }
+    let mut lines = Vec::new();
+    for img in refs {
+        match worker_docker::pull_worker_image_best_effort(&img) {
+            Ok(msg) => {
+                let line = format!("{img}: {msg}");
+                push_app_log(&log, format!("worker image pull: {line}"));
+                lines.push(line);
+            }
+            Err(e) => {
+                let line = format!("{img}: ERR {e}");
+                push_app_log(&log, format!("worker image pull: {line}"));
+                lines.push(line);
+            }
+        }
+    }
+    Ok(lines)
 }
 
 #[derive(Serialize)]
@@ -646,6 +678,8 @@ pub fn run() {
             save_llm_sources,
             delete_worker,
             docker_status,
+            default_worker_agent_image,
+            worker_registry_images_refresh,
             hardware_profile,
             github_token_configured,
             set_github_token,

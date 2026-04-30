@@ -16,6 +16,7 @@ jobs:
       js: ${{ steps.filter.outputs.js }}
       rust: ${{ steps.filter.outputs.rust }}
       workflow: ${{ steps.filter.outputs.workflow }}
+      docker_ctx: ${{ steps.filter.outputs.docker_ctx }}
     steps:
       - uses: actions/checkout@v4
       - uses: dorny/paths-filter@v3
@@ -39,6 +40,10 @@ jobs:
               - 'docker/**'
             workflow:
               - '.github/workflows/**'
+            docker_ctx:
+              - 'docker/**'
+              - 'crates/ai_worker_core/**'
+              - 'docs/rules/rules-tree.json'
 
   frontend:
     needs: changes
@@ -102,9 +107,18 @@ jobs:
         if: matrix.os == 'ubuntu-latest'
         run: bash test/scripts/repo_agent_fixture_test.sh
 
+  docker-worker-agent:
+    needs: changes
+    if: needs.changes.outputs.docker_ctx == 'true' || needs.changes.outputs.workflow == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build worker agent image
+        run: docker build -f docker/Dockerfile.worker .
+
   ci-success:
     name: CI success
-    needs: [changes, frontend, rust, e2e]
+    needs: [changes, frontend, rust, e2e, docker-worker-agent]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -114,13 +128,14 @@ jobs:
           FRONTEND: ${{ needs.frontend.result }}
           RUST: ${{ needs.rust.result }}
           E2E: ${{ needs.e2e.result }}
+          DOCKER_AGENT: ${{ needs.docker-worker-agent.result }}
         run: |
-          echo "changes=$CHANGES frontend=$FRONTEND rust=$RUST e2e=$E2E"
+          echo "changes=$CHANGES frontend=$FRONTEND rust=$RUST e2e=$E2E dockerAgent=$DOCKER_AGENT"
           if [ "$CHANGES" != "success" ]; then
             echo "changes job did not succeed."
             exit 1
           fi
-          for r in "$FRONTEND" "$RUST" "$E2E"; do
+          for r in "$FRONTEND" "$RUST" "$E2E" "$DOCKER_AGENT"; do
             if [ "$r" = "failure" ] || [ "$r" = "cancelled" ]; then
               echo "A CI job failed or was cancelled."
               exit 1

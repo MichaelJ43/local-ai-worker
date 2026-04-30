@@ -38,12 +38,56 @@ pub fn default_long_term_volume_name(worker_id: &str) -> String {
     format!("local-ai-lt-{safe}")
 }
 
-fn default_agent_image(worker: &WorkerDefinition) -> String {
-    worker
-        .docker_image
+/// Compile-time default when a worker has no `docker_image` (see `LOCAL_AI_DEFAULT_WORKER_AGENT_IMAGE` in release builds).
+pub fn bundled_default_agent_image() -> &'static str {
+    env!("DEFAULT_WORKER_AGENT_IMAGE")
+}
+
+/// Resolved image ref for a worker (`dockerImage` or bundled default).
+pub fn resolved_agent_image(w: &WorkerDefinition) -> String {
+    w.docker_image
         .clone()
         .filter(|s| !s.is_empty())
-        .unwrap_or_else(|| "local-ai-worker-agent:latest".to_string())
+        .unwrap_or_else(|| bundled_default_agent_image().to_string())
+}
+
+fn image_ref_may_pull_from_registry(image: &str) -> bool {
+    let s = image.trim();
+    if s.is_empty() {
+        return false;
+    }
+    if s.starts_with("ghcr.io/") {
+        return true;
+    }
+    match s.split_once('/') {
+        Some((first, rest)) => {
+            if rest.is_empty() || first.is_empty() {
+                return false;
+            }
+            if first.contains('.') || first == "localhost" || first == "docker.io" {
+                return true;
+            }
+            // Namespaced refs (e.g. Docker Hub `user/image`, GHCR already handled above).
+            true
+        }
+        None => false,
+    }
+}
+
+/// Best-effort `docker pull` when the ref looks like a remote registry image (e.g. GHCR, `registry/...`).
+pub fn pull_worker_image_best_effort(image: &str) -> Result<String, String> {
+    if !image_ref_may_pull_from_registry(image) {
+        return Ok("skipped (not a registry image ref)".into());
+    }
+    let out = Command::new("docker")
+        .args(["pull", image.trim()])
+        .output()
+        .map_err(|e| e.to_string())?;
+    if out.status.success() {
+        Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_owned())
+    }
 }
 
 fn worker_repo_url_trim(w: &WorkerDefinition) -> Option<&str> {
@@ -298,7 +342,8 @@ pub fn worker_start(
         .map_err(|e| format!("audit db path: {e}"))?;
 
     let cname = container_name_for_worker(&w.id);
-    let image = default_agent_image(w);
+    let image = resolved_agent_image(w);
+    let _ = pull_worker_image_best_effort(&image);
 
     let _ = Command::new("docker")
         .args(["rm", "-f", &cname])
