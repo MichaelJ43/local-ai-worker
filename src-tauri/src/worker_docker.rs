@@ -39,7 +39,7 @@ fn docker_bind_host_path_windows(path: &Path) -> Result<String, String> {
     let canon = path
         .canonicalize()
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    fn push_normals(mut it: impl Iterator<Item = Component<'_>>, mut buf: String) -> String {
+    fn push_normals(mut it: std::path::Components<'_>, mut buf: String) -> String {
         while let Some(c) = it.next() {
             match c {
                 Component::Normal(os) => {
@@ -57,7 +57,7 @@ fn docker_bind_host_path_windows(path: &Path) -> Result<String, String> {
     match it.next() {
         Some(Component::Prefix(p)) => match p.kind() {
             Prefix::Disk(byte) | Prefix::VerbatimDisk(byte) => {
-                let letter = (*byte as char).to_ascii_lowercase();
+                let letter = (byte as char).to_ascii_lowercase();
                 if matches!(it.as_path().components().next(), Some(Component::RootDir)) {
                     it.next();
                 }
