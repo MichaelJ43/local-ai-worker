@@ -39,8 +39,8 @@ fn docker_bind_host_path_windows(path: &Path) -> Result<String, String> {
     let canon = path
         .canonicalize()
         .map_err(|e| format!("{}: {e}", path.display()))?;
-    fn push_normals(mut it: std::path::Components<'_>, mut buf: String) -> String {
-        while let Some(c) = it.next() {
+    fn push_normals(it: std::path::Components<'_>, mut buf: String) -> String {
+        for c in it {
             match c {
                 Component::Normal(os) => {
                     buf.push('/');
