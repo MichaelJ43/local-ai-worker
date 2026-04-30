@@ -55,6 +55,26 @@ worker_agent_append_host_runtime_log() {
   fi
 }
 
+# When AI_REPO_RUNTIME_LOG is set (repo agent), avoid a permanently empty file during long
+# cadence waits: append at most once per intervalSec (default 300).
+worker_agent_throttled_runtime_log() {
+  local line="$1"
+  local intervalSec="${2:-300}"
+  [[ -z "${AI_REPO_RUNTIME_LOG:-}" ]] && return 0
+  local stamp_file="${AI_REPO_THROTTLED_LOG_STAMP:-/persist/.worker_agent_throttled_runtime_log_ts}"
+  local now_ts last
+  now_ts="$(date -u +%s)"
+  last=0
+  if [[ -f "$stamp_file" ]] && [[ "$(cat "$stamp_file" 2>/dev/null)" =~ ^[0-9]+$ ]]; then
+    last="$(cat "$stamp_file")"
+  fi
+  if [[ "$last" =~ ^[0-9]+$ ]] && [[ $((now_ts - last)) -lt "$intervalSec" ]]; then
+    return 0
+  fi
+  printf '%s\n' "$now_ts" >"$stamp_file" 2>/dev/null || true
+  worker_agent_append_host_runtime_log "$line"
+}
+
 state_init() {
   if [[ ! -f "$STATE" ]]; then
     echo '{"oneShotDone":{},"cadenceLastBucket":{}}' >"$STATE"
@@ -154,7 +174,12 @@ collect_due() {
       titles+="- (one-shot) ${title}"$'\n'
       echo "os $tid" >>"$PENDING"
     elif [[ "$kind" == "cadence" ]]; then
-      interval="$(echo "$row" | jq -r '.schedule.intervalSeconds')"
+      interval="$(echo "$row" | jq -r '.schedule.intervalSeconds // empty')"
+      if [[ -z "$interval" || "$interval" == "null" ]] || ! [[ "$interval" =~ ^[1-9][0-9]*$ ]]; then
+        worker_agent_log "task ${tid}: cadence requires positive intervalSeconds (got '${interval:-empty}'), skipping"
+        shell_i=$((shell_i + 1))
+        continue
+      fi
       bucket=$((now / interval))
       prev="$(cadence_prev "$tid")"
       if [[ "$prev" != "none" && "$prev" == "$bucket" ]]; then
@@ -164,6 +189,8 @@ collect_due() {
       any=1
       titles+="- (every ${interval}s) ${title}"$'\n'
       echo "cd $tid $bucket" >>"$PENDING"
+    else
+      worker_agent_log "task ${tid}: unknown schedule.kind '${kind}', skipping"
     fi
     shell_i=$((shell_i + 1))
   done
