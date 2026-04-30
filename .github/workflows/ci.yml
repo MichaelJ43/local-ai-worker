@@ -44,6 +44,7 @@ jobs:
               - 'docker/**'
               - 'crates/ai_worker_core/**'
               - 'docs/rules/rules-tree.json'
+              - '.github/workflows/publish-worker-agent-image.yml'
 
   frontend:
     needs: changes

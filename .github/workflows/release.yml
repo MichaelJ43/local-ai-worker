@@ -17,9 +17,34 @@ concurrency:
 
 permissions:
   contents: write
+  packages: write
 
 jobs:
+  # Ensure GHCR has the matching tag before Tauri uploads installers (avoids app 0.1.11 + missing image).
+  release-semver:
+    name: Resolve release semver
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.v.outputs.version }}
+    steps:
+      - id: v
+        env:
+          TAG: ${{ github.event.inputs.tag }}
+        run: |
+          VER="${TAG#v}"
+          echo "version=${VER}" >> "${GITHUB_OUTPUT}"
+          echo "Worker image / app semver: ${VER}"
+
+  worker-agent-image:
+    needs: release-semver
+    uses: ./.github/workflows/publish-worker-agent-image.yml
+    secrets: inherit
+    with:
+      checkout_ref: ${{ github.event.inputs.tag }}
+      image_version: ${{ needs.release-semver.outputs.version }}
+
   publish:
+    needs: [worker-agent-image]
     strategy:
       fail-fast: false
       matrix:
