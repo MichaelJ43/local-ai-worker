@@ -153,8 +153,9 @@ maybe_run_allowed_test_profiles() {
 }
 
 run_cycle_repo() {
-  local titles
+  local titles idle_every="${AI_REPO_IDLE_LOG_SEC:-300}"
   if ! titles="$(collect_due)"; then
+    worker_agent_throttled_runtime_log "idle poll (${POLL}s): no tasks due — cadence runs at most once per intervalSeconds (Unix epoch buckets); full chatter is docker logs; this line about every ${idle_every}s." "$idle_every"
     sleep "$POLL"
     return 0
   fi
@@ -221,10 +222,12 @@ run_cycle_repo() {
   maybe_execute_commands_from_json "$content_clean" || true
   maybe_run_allowed_test_profiles || true
   worker_agent_log "repo cycle ok"
+  worker_agent_append_host_runtime_log "repo cycle ok"
   sleep "$POLL"
 }
 
 worker_agent_log "starting repo agent loop REPO_ROOT=$REPO_ROOT mode=$EXEC_MODE model=$model poll=${POLL}s"
+worker_agent_append_host_runtime_log "repo agent started poll=${POLL}s — full stdout is docker logs; this file records milestones, errors, and throttled idle hints"
 
 while true; do
   run_cycle_repo || true
