@@ -118,9 +118,34 @@ pub fn materialize_worker_runtime(
 
     let ctx = WorkerContext::load_or_create(ctx_path).map_err(|e| e.to_string())?;
     let excerpt = ctx.excerpt_for_prompt(4000);
-    let section = rules::assemble_system_prompt_section(&dom, &rails, Some(&excerpt));
+    let mut full_prompt =
+        rules::assemble_system_prompt_section(&dom, &rails, Some(&excerpt));
+
+    let repo_trim = w
+        .hybrid_options
+        .as_ref()
+        .and_then(|h| h.repo_url.as_deref())
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(repo) = repo_trim {
+        full_prompt.push_str("\n\n### Repository (GitHub)\n");
+        full_prompt.push_str(repo);
+        full_prompt.push('\n');
+    }
+
+    let extra = w
+        .worker_prompt
+        .as_deref()
+        .map(str::trim)
+        .filter(|s| !s.is_empty());
+    if let Some(p) = extra {
+        full_prompt.push_str("\n\n### Worker instructions\n");
+        full_prompt.push_str(p);
+        full_prompt.push('\n');
+    }
+
     let prompt_path = wid_dir.join("system-prompt.txt");
-    std::fs::write(&prompt_path, section).map_err(|e| e.to_string())?;
+    std::fs::write(&prompt_path, full_prompt).map_err(|e| e.to_string())?;
 
     let agent_cfg = serde_json::json!({
         "workerId": w.id,

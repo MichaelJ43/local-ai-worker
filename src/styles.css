@@ -420,6 +420,11 @@ button.small-pad {
   margin: 0 0 0.5rem;
 }
 
+.hint.block {
+  display: block;
+  margin: 0.25rem 0 0;
+}
+
 .workers {
   display: flex;
   flex-direction: column;
