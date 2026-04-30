@@ -221,18 +221,15 @@ fn worker_registry_images_refresh(log: tauri::State<AppLogBuffer>) -> Result<Vec
     }
     let mut lines = Vec::new();
     for img in refs {
-        match worker_docker::pull_worker_image_best_effort(&img) {
-            Ok(msg) => {
-                let line = format!("{img}: {msg}");
-                push_app_log(&log, format!("worker image pull: {line}"));
-                lines.push(line);
-            }
-            Err(e) => {
-                let line = format!("{img}: ERR {e}");
-                push_app_log(&log, format!("worker image pull: {line}"));
-                lines.push(line);
-            }
-        }
+        let before = img.clone();
+        let effective = worker_docker::ensure_worker_image_available(&img);
+        let line = if effective != before {
+            format!("{before}: pulled {effective} (:latest fallback)")
+        } else {
+            format!("{before}: ok")
+        };
+        push_app_log(&log, format!("worker image pull: {line}"));
+        lines.push(line);
     }
     Ok(lines)
 }

@@ -311,6 +311,37 @@ fn collect_container_secret_env(w: &WorkerDefinition) -> Result<Vec<(String, Str
     Ok(out)
 }
 
+/// GHCR `…/name:tag` → `…/name:latest` when `tag != latest` (installers pin semver; registry may lag).
+fn worker_image_fallback_latest(requested: &str) -> Option<String> {
+    let s = requested.trim();
+    if s.contains('@') {
+        return None;
+    }
+    let suffix = s.strip_prefix("ghcr.io/")?;
+    let (repo_path, tag) = suffix.rsplit_once(':')?;
+    if tag == "latest" || tag.is_empty() {
+        return None;
+    }
+    Some(format!("ghcr.io/{repo_path}:latest"))
+}
+
+/// Pull registry image; if the pinned tag fails and the ref is GHCR with a non-`latest` tag, try `docker pull …:latest` and use that for `docker run`.
+pub fn ensure_worker_image_available(requested: &str) -> String {
+    let requested = requested.trim();
+    if !image_ref_may_pull_from_registry(requested) {
+        return requested.to_string();
+    }
+    if pull_worker_image_best_effort(requested).is_ok() {
+        return requested.to_string();
+    }
+    if let Some(fallback) = worker_image_fallback_latest(requested) {
+        if pull_worker_image_best_effort(&fallback).is_ok() {
+            return fallback;
+        }
+    }
+    requested.to_string()
+}
+
 pub fn worker_start(
     app_root: &Path,
     audit_db: &Path,
@@ -342,8 +373,8 @@ pub fn worker_start(
         .map_err(|e| format!("audit db path: {e}"))?;
 
     let cname = container_name_for_worker(&w.id);
-    let image = resolved_agent_image(w);
-    let _ = pull_worker_image_best_effort(&image);
+    let requested = resolved_agent_image(w);
+    let image = ensure_worker_image_available(&requested);
 
     let _ = Command::new("docker")
         .args(["rm", "-f", &cname])
@@ -492,4 +523,31 @@ pub fn worker_ps(worker_id: &str) -> Result<String, String> {
         .output()
         .map_err(|e| e.to_string())?;
     Ok(String::from_utf8_lossy(&out.stdout).trim().to_string())
+}
+
+#[cfg(test)]
+mod worker_image_fallback_tests {
+    use super::worker_image_fallback_latest;
+
+    #[test]
+    fn ghcr_semver_to_latest() {
+        assert_eq!(
+            worker_image_fallback_latest("ghcr.io/acme/local-ai-worker-agent:0.1.11").as_deref(),
+            Some("ghcr.io/acme/local-ai-worker-agent:latest")
+        );
+    }
+
+    #[test]
+    fn no_fallback_for_latest_or_digest() {
+        assert_eq!(worker_image_fallback_latest("ghcr.io/a/b:latest"), None);
+        assert_eq!(
+            worker_image_fallback_latest("ghcr.io/a/b@sha256:abc"),
+            None
+        );
+    }
+
+    #[test]
+    fn no_fallback_non_ghcr() {
+        assert_eq!(worker_image_fallback_latest("docker.io/foo/bar:1"), None);
+    }
 }
