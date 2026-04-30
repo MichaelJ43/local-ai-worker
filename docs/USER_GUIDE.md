@@ -1,5 +1,78 @@
 # Local AI Worker — User guide
 
+## UI tour
+
+Screenshots below live under [`docs/images/`](images/).
+
+### Overview
+
+High-level environment and stack controls (hardware hints, Ollama compose, model tags).
+
+![Overview of the main environment panel](images/overview.png)
+
+### Workers
+
+Collapsed summary of configured workers (expand for full editor per worker).
+
+![Workers list collapsed](images/workers-collapsed.png)
+
+Expanded worker editor (storage, container actions, repo URL, advanced options).
+
+![Workers list expanded](images/workers-expanded.png)
+
+### Secrets
+
+GitHub token entry (stored in the OS secure store; injected into worker containers).
+
+![Secrets panel for GitHub token](images/secrets.png)
+
+### LLM sources
+
+Configure how the app reaches models (host, tags, related settings).
+
+![LLM sources configuration](images/llm-sources.png)
+
+### Diagnostics
+
+Host and Docker diagnostics useful when troubleshooting compose or containers.
+
+![Diagnostics panel](images/diagnostics.png)
+
+## Process overview
+
+End-to-end flows from setup through a running worker.
+
+```mermaid
+flowchart TD
+  subgraph setup["First-time setup"]
+    P[Install Docker Desktop Rust Node]
+    B[Build worker image local-ai-worker-agent:latest]
+    AP[Start desktop app]
+    P --> B --> AP
+  end
+
+  subgraph stack["Ollama stack"]
+    U[Compose up from UI]
+    M[Pull model in Ollama container]
+    U --> M
+  end
+
+  subgraph lifecycle["Worker lifecycle"]
+    T[Save GitHub token Secrets]
+    W[Add or edit workers Save workers]
+    S[Prepare storage context volume optional repo checkout]
+    R[Start or recreate container]
+    L[Agent loop ↔ Ollama context git gh guardrails]
+    AP --> U
+    M --> T
+    T --> W --> S --> R --> L
+  end
+```
+
+If you configure a **GitHub repository URL** (and branch) on a worker, **Prepare / Start** also clones or syncs under `workers/<id>/checkout` and mounts it at **`/workspace/repo`**; the container then runs the **structured JSON repo agent loop** with **observe / apply_git / apply_github** tiers instead of only the legacy free-text loop (see **Workers** below).
+
+At runtime the desktop UI invokes **Tauri commands**, which persist **`workers.json`**, drive **Docker CLI**, and use **`ai_worker_core`** for rules, context files, audit SQLite, and Ollama HTTP. Worker containers mount context, **`guardrails.effective.json`**, optional **`/workspace/repo`**, **`GITHUB_TOKEN`**, and **`/persist`** (including shared **`audit.sqlite3`** where configured).
+
 ## What it does
 
 - Runs **Ollama** via **Docker Compose** (bundled YAML + optional GPU file) or your own compose at the repo root.

@@ -43,7 +43,7 @@ Desktop app (Tauri + Rust) to manage autonomous AI workers against **Docker-host
 | `src-tauri/` | Tauri host + commands |
 | `crates/ai_worker_core/` | Shared Rust: rules, context, audit, Ollama client, hardware, rate limits, `worker-guard` |
 | `test/` | Integration tests (Rust) |
-| `docs/` | Documentation and bundled `rules-tree.json` source ([`COMPOSE_WORKERS.md`](docs/COMPOSE_WORKERS.md) for optional worker-in-compose) |
+| `docs/` | Documentation, bundled `rules-tree.json` source, [`docs/images/`](docs/images/) screenshots ([`COMPOSE_WORKERS.md`](docs/COMPOSE_WORKERS.md) for optional worker-in-compose) |
 | `docker/` | Worker image (`Dockerfile.worker`, agent loop, git/gh wrappers) |
 | `src-tauri/resources/compose/` | Bundled Ollama Compose base + GPU override (copied to app data at runtime) |
 
@@ -59,7 +59,7 @@ npm run build
 npm run test:e2e
 ```
 
-See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for day-to-day usage (workers, Docker, audit).
+See [docs/USER_GUIDE.md](docs/USER_GUIDE.md) for day-to-day usage (workers, Docker, audit), a **[process overview](docs/USER_GUIDE.md#process-overview)** flowchart, **UI screenshots** under [`docs/images/`](docs/images/), and [docs/architecture.md](docs/architecture.md) for the component diagram.
 
 ## Release build (local)
 
