@@ -20,6 +20,10 @@ fn git_allowlist_enforced_empty_fails() {
         env_from_secrets: vec![],
         hybrid_options: None,
         worker_prompt: None,
+        repo_execution_mode: None,
+        allowed_test_profiles: None,
+        docker_network: None,
+        repo_sandbox_policy: None,
     };
     assert!(w.validate().is_err());
 }

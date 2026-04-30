@@ -5,6 +5,7 @@ mod hybrid;
 mod persist_llm;
 mod secrets;
 mod worker_docker;
+mod worker_repo_checkout;
 
 use hybrid::{hybrid_bridge_status, hybrid_run_worker};
 

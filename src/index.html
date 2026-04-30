@@ -58,7 +58,7 @@
                 </ol>
                 <p class="hint">
                   Without explicit mappings, <code>GITHUB_TOKEN</code> is passed to agents when
-                  <code>github_token</code> (or a legacy saved token) exists.
+                  <code>github_token</code> (or a legacy saved token) exists. Containers also set <code>GH_TOKEN</code> from it so <code>gh</code> uses your PAT—not <code>gh auth login</code>. A fine-grained token limited to one repo works for both host clone/sync and GitHub CLI.
                 </p>
               </section>
             </div>

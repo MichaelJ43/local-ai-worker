@@ -56,6 +56,43 @@
       }
     },
     "workerPrompt": { "type": ["string", "null"] },
+    "repoExecutionMode": {
+      "anyOf": [
+        { "type": "null" },
+        { "type": "string", "enum": ["observe", "apply_git", "apply_github"] }
+      ]
+    },
+    "allowedTestProfiles": {
+      "type": ["array", "null"],
+      "items": {
+        "type": "object",
+        "required": ["command"],
+        "properties": {
+          "command": { "type": "string", "minLength": 1 },
+          "argv": {
+            "type": "array",
+            "items": { "type": "string" }
+          }
+        },
+        "additionalProperties": false
+      }
+    },
+    "dockerNetwork": {
+      "type": ["string", "null"],
+      "pattern": "^[A-Za-z0-9._-]*$"
+    },
+    "repoSandboxPolicy": {
+      "type": ["object", "null"],
+      "properties": {
+        "fileWritesEnabled": { "type": "boolean" },
+        "applyUnifiedDiffsEnabled": { "type": "boolean" },
+        "patchMaxFileBytes": { "type": "integer", "minimum": 1024, "maximum": 52428800 },
+        "patchMaxTotalBytes": { "type": "integer", "minimum": 1024, "maximum": 52428800 },
+        "patchMaxUnifiedDiffBytes": { "type": "integer", "minimum": 1024, "maximum": 52428800 },
+        "allowGitInternalsWrites": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
     "hybridOptions": {
       "type": ["object", "null"],
       "properties": {

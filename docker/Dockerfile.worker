@@ -29,9 +29,12 @@ COPY docker/git-wrap.sh /opt/ai-worker/bin/git
 COPY docker/gh-wrap.sh /opt/ai-worker/bin/gh
 RUN chmod +x /opt/ai-worker/bin/git /opt/ai-worker/bin/gh
 
+COPY docker/repo_sandbox_writes.sh /opt/ai-worker/scripts/repo_sandbox_writes.sh
+COPY docker/worker-agent-common.sh /opt/ai-worker/scripts/worker-agent-common.sh
 COPY docker/agent-loop.sh /opt/ai-worker/scripts/agent-loop.sh
+COPY docker/repo-agent-loop.sh /opt/ai-worker/scripts/repo-agent-loop.sh
 COPY docker/entrypoint.sh /opt/ai-worker/entrypoint.sh
-RUN chmod +x /opt/ai-worker/scripts/agent-loop.sh /opt/ai-worker/entrypoint.sh
+RUN chmod +x /opt/ai-worker/scripts/agent-loop.sh /opt/ai-worker/scripts/repo-agent-loop.sh /opt/ai-worker/entrypoint.sh
 
 ENV PATH="/opt/ai-worker/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin"
 WORKDIR /workspace

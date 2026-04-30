@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "tauri:build": "node scripts/inject-updater-endpoint.mjs && tauri build",
     "version:bump": "node scripts/bump-version.mjs",
-    "test:e2e": "playwright test"
+    "test:e2e": "playwright test",
+    "test:fixtures": "bash test/scripts/repo_agent_fixture_test.sh"
   },
   "dependencies": {
     "@tauri-apps/api": "^2",
