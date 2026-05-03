@@ -145,7 +145,8 @@ resource "aws_lb_listener" "https" {
   certificate_arn   = var.certificate_arn
   # Both slots' target groups must be registered on this listener: ECS rejects a
   # service load_balancer block if the TG has no associated load balancer. Route
-  # all traffic to slot A until you change weights (ignored below after first apply).
+  # all traffic to slot A (weight 0 on B). Do not use ignore_changes here: it
+  # prevented migrating an existing single-target listener to this shape in AWS.
   default_action {
     type = "forward"
     forward {
@@ -158,9 +159,6 @@ resource "aws_lb_listener" "https" {
         weight = 0
       }
     }
-  }
-  lifecycle {
-    ignore_changes = [default_action]
   }
 }
 
