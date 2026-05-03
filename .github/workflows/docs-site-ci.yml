@@ -1,0 +1,56 @@
+name: Docs site CI
+
+on:
+  push:
+    branches: [main, master]
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/docs-site-ci.yml"
+  pull_request:
+    branches: [main, master]
+    paths:
+      - "docs-site/**"
+      - ".github/workflows/docs-site-ci.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: "8.0.x"
+      - name: Restore and test (unit)
+        run: dotnet test docs-site/LocalAiWorker.Docs.Tests/LocalAiWorker.Docs.Tests.csproj -c Release --verbosity normal
+
+  ui:
+    runs-on: ubuntu-latest
+    container:
+      image: mcr.microsoft.com/playwright/dotnet:v1.41.0-jammy
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install curl
+        run: apt-get update && apt-get install -y curl
+      - name: Build solution
+        run: dotnet build docs-site/LocalAiWorker.Docs.sln -c Release
+      - name: Start docs app
+        run: |
+          dotnet run --project docs-site/LocalAiWorker.Docs -c Release --urls http://127.0.0.1:5055 --no-build &
+          for i in $(seq 1 30); do
+            curl -fsS http://127.0.0.1:5055/health && break
+            sleep 1
+          done
+      - name: UI tests
+        env:
+          DOCS_BASE_URL: http://127.0.0.1:5055
+        run: dotnet test docs-site/LocalAiWorker.Docs.UiTests/LocalAiWorker.Docs.UiTests.csproj -c Release --verbosity normal
+
+  docker:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build docs image
+        run: docker build -f docs-site/Dockerfile .

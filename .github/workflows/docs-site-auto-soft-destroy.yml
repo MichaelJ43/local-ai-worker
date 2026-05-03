@@ -1,0 +1,58 @@
+name: Docs site auto soft destroy
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 15 * * 0"
+
+permissions:
+  id-token: write
+  contents: read
+  actions: write
+
+jobs:
+  gate:
+    if: vars.ENABLE_AUTO_SOFT_DESTROY == 'true'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN }}
+          aws-region: ${{ secrets.AWS_REGION }}
+
+      - name: Idle gate (SSM)
+        id: gate
+        shell: bash
+        env:
+          IDLE_DAYS: ${{ vars.AUTO_SOFT_DESTROY_IDLE_DAYS }}
+        run: |
+          set -euo pipefail
+          echo "eligible=false" >> "${GITHUB_OUTPUT}"
+          MODE=$(aws ssm get-parameter --name /local-ai-worker/docs/site_mode --query Parameter.Value --output text 2>/dev/null || echo none)
+          if [[ "$MODE" != "fargate" ]]; then
+            echo "skip: site_mode=$MODE"
+            exit 0
+          fi
+          LAST=$(aws ssm get-parameter --name /local-ai-worker/docs/last_fargate_deploy_iso --query Parameter.Value --output text 2>/dev/null || echo "")
+          if [[ -z "$LAST" ]]; then
+            echo "skip: no last_fargate_deploy_iso"
+            exit 0
+          fi
+          DAYS="${IDLE_DAYS:-14}"
+          LAST_EPOCH=$(date -u -d "${LAST}" +%s)
+          NOW_EPOCH=$(date -u +%s)
+          DIFF=$(( (NOW_EPOCH - LAST_EPOCH) / 86400 ))
+          echo "idle_days=${DIFF} threshold=${DAYS}"
+          if [[ "$DIFF" -lt "$DAYS" ]]; then
+            echo "skip: within idle window"
+            exit 0
+          fi
+          echo "eligible=true" >> "${GITHUB_OUTPUT}"
+
+      - name: Dispatch soft destroy
+        if: steps.gate.outputs.eligible == 'true'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: gh workflow run docs-site-soft-destroy.yml --ref "${{ github.ref_name }}"

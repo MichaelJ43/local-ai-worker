@@ -1,0 +1,9 @@
+@page
+@model ErrorModel
+@{
+    ViewData["Title"] = "Error";
+}
+
+<p class="m43-section-title">Something went wrong</p>
+<p>@(Model.Message ?? "An unexpected error occurred.")</p>
+<p><a href="/">Back to home</a></p>

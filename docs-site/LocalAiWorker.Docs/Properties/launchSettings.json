@@ -1,0 +1,14 @@
+{
+  "profiles": {
+    "LocalAiWorker.Docs": {
+      "commandName": "Project",
+      "dotnetRunMessages": true,
+      "launchBrowser": true,
+      "applicationUrl": "http://127.0.0.1:5055",
+      "environmentVariables": {
+        "ASPNETCORE_ENVIRONMENT": "Development",
+        "M43__StaticAssetsBaseUrl": "https://static.michaelj43.dev"
+      }
+    }
+  }
+}
