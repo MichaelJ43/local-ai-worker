@@ -1,6 +1,13 @@
 name: Docs site deploy
 
 on:
+  push:
+    branches: [main, master]
+    paths:
+      - "docs-site/**"
+      - "docs/images/**"
+      - ".github/workflows/docs-site-deploy.yml"
+      - ".github/workflows/publish-docs-site-image.yml"
   workflow_dispatch:
     inputs:
       image_tag:
@@ -8,6 +15,10 @@ on:
         required: false
         type: string
         default: ""
+
+concurrency:
+  group: docs-site-deploy-${{ github.ref }}
+  cancel-in-progress: true
 
 # Optional: uncomment to attach GitHub Deployments + environment URL after creating
 # `aiworkers-docs` (or your name) in repo Settings → Environments.
@@ -22,7 +33,8 @@ jobs:
     secrets: inherit
     with:
       checkout_ref: ${{ github.sha }}
-      image_tag: ${{ github.event.inputs.image_tag != '' && github.event.inputs.image_tag || github.sha }}
+      # workflow_dispatch: use input when set; push: always use commit SHA
+      image_tag: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || github.sha }}
 
   terraform-fargate:
     needs: image
@@ -36,7 +48,7 @@ jobs:
         id: img
         shell: bash
         env:
-          TAG: ${{ github.event.inputs.image_tag != '' && github.event.inputs.image_tag || github.sha }}
+          TAG: ${{ github.event_name == 'workflow_dispatch' && github.event.inputs.image_tag || github.sha }}
         run: |
           owner=$(echo "${{ github.repository_owner }}" | tr '[:upper:]' '[:lower:]')
           echo "uri=ghcr.io/${owner}/local-ai-worker-docs:${TAG}" >> "${GITHUB_OUTPUT}"
