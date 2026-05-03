@@ -6,6 +6,7 @@ on:
     paths:
       - "docs-site/**"
       - "docs/images/**"
+      - "infra/terraform/docs-site-fargate/**"
       - ".github/workflows/docs-site-deploy.yml"
       - ".github/workflows/publish-docs-site-image.yml"
   workflow_dispatch:
