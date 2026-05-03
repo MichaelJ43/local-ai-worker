@@ -143,9 +143,21 @@ resource "aws_lb_listener" "https" {
   protocol          = "HTTPS"
   ssl_policy        = "ELBSecurityPolicy-TLS13-1-2-2021-06"
   certificate_arn   = var.certificate_arn
+  # Both slots' target groups must be registered on this listener: ECS rejects a
+  # service load_balancer block if the TG has no associated load balancer. Route
+  # all traffic to slot A until you change weights (ignored below after first apply).
   default_action {
-    type             = "forward"
-    target_group_arn = aws_lb_target_group.slot_a.arn
+    type = "forward"
+    forward {
+      target_group {
+        arn    = aws_lb_target_group.slot_a.arn
+        weight = 100
+      }
+      target_group {
+        arn    = aws_lb_target_group.slot_b.arn
+        weight = 0
+      }
+    }
   }
   lifecycle {
     ignore_changes = [default_action]
