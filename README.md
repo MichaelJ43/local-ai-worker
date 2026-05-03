@@ -2,6 +2,14 @@
 
 Desktop app (Tauri + Rust) to manage autonomous AI workers against **Docker-hosted Ollama**, with domain **rules trees** (Git guardrails v1), **SQLite audit** hooks in core, **rolling rate limits**, and **GitHub token** storage via **Windows Credential Manager** / **macOS Keychain**.
 
+[![CI](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/ci.yml)
+[![Release](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/release.yml/badge.svg)](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/release.yml)
+[![Docs site CI](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-ci.yml/badge.svg?branch=main)](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-ci.yml)
+[![Docs site deploy](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-deploy.yml/badge.svg)](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-deploy.yml)
+[![Docs site soft destroy](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-soft-destroy.yml/badge.svg)](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-soft-destroy.yml)
+[![Docs site auto soft destroy](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-auto-soft-destroy.yml/badge.svg)](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-auto-soft-destroy.yml)
+[![Docs site full destroy](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-full-destroy.yml/badge.svg)](https://github.com/MichaelJ43/local-ai-worker/actions/workflows/docs-site-full-destroy.yml)
+
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (stable)
@@ -46,6 +54,8 @@ Desktop app (Tauri + Rust) to manage autonomous AI workers against **Docker-host
 | `docs/` | Documentation, bundled `rules-tree.json` source, [`docs/images/`](docs/images/) screenshots ([`COMPOSE_WORKERS.md`](docs/COMPOSE_WORKERS.md) for optional worker-in-compose) |
 | `docker/` | Worker image (`Dockerfile.worker`, agent loop, git/gh wrappers) |
 | `src-tauri/resources/compose/` | Bundled Ollama Compose base + GPU override (copied to app data at runtime) |
+| `docs-site/` | ASP.NET Core 8 docs + downloads site (Docker image `local-ai-worker-docs`, see [`docs-site/README.md`](docs-site/README.md)) |
+| `infra/terraform/` | AWS Terraform for docs Fargate + static (see [`infra/terraform/README.md`](infra/terraform/README.md)) |
 
 ## Default model
 
@@ -86,6 +96,15 @@ This repo follows the same pattern as [Echo](https://github.com/MichaelJ43/echo)
 | [`.github/workflows/ci.yml`](.github/workflows/ci.yml) | Path-filtered CI: frontend build, Playwright, Rust `test` + `clippy` on Ubuntu, Windows, and macOS. |
 | [`.github/workflows/version-bump.yml`](.github/workflows/version-bump.yml) | On **merged PR to `main`**, bumps **patch** by default (or use `+(semver:minor)` / `+(semver:major)` in the PR title), commits, tags `v*`, pushes with **`RELEASE_PUSH_TOKEN`**, then dispatches **Release**. Manual **workflow_dispatch** can choose patch/minor/major. |
 | [`.github/workflows/release.yml`](.github/workflows/release.yml) | **workflow_dispatch** with a tag: builds Linux / Windows / macOS via **`tauri-apps/tauri-action`**, uploads installers and **`latest.json`** to the GitHub Release (for the in-app updater). |
+| [`.github/workflows/docs-site-ci.yml`](.github/workflows/docs-site-ci.yml) | **Docs site**: .NET unit + Playwright UI tests (Playwright container), Docker build for `docs-site/Dockerfile`. |
+| [`.github/workflows/docs-site-deploy.yml`](.github/workflows/docs-site-deploy.yml) | **Manual** deploy: push **`local-ai-worker-docs`** to GHCR, Terraform apply Fargate stack, SSM markers. Requires AWS OIDC + Terraform backend secrets and repo **Variable** `TF_CUSTOM_DOMAIN`. |
+| [`.github/workflows/docs-site-soft-destroy.yml`](.github/workflows/docs-site-soft-destroy.yml) | Static export, Terraform static + S3 sync + CloudFront invalidation; Route53 cutover from ALB → CF is documented in workflow echo (extend with CLI). Needs **`TF_CLOUDFRONT_ACM_CERTIFICATE_ARN`** (us-east-1 ACM). |
+| [`.github/workflows/docs-site-auto-soft-destroy.yml`](.github/workflows/docs-site-auto-soft-destroy.yml) | Weekly schedule (disabled until **Variable** `ENABLE_AUTO_SOFT_DESTROY` = `true`): SSM idle gate, then **`gh workflow run`** soft-destroy. |
+| [`.github/workflows/docs-site-full-destroy.yml`](.github/workflows/docs-site-full-destroy.yml) | Type `DELETE` to **`terraform destroy`** static then Fargate state (each step may no-op if stack missing). |
+
+### Docs site — GitHub secrets and variables
+
+Configure **OIDC** role (`AWS_ROLE_ARN`), **`AWS_REGION`**, **`TF_ACM_CERTIFICATE_ARN`** (regional ALB cert), **`TF_ROUTE53_HOSTED_ZONE_ID`**, **`TF_STATE_BUCKET`**, **`TF_STATE_LOCK_TABLE`**, **`TF_CLOUDFRONT_ACM_CERTIFICATE_ARN`** (us-east-1, for static/CloudFront). **Repository variable**: **`TF_CUSTOM_DOMAIN`** (e.g. `aiworkers.michaelj43.dev`). Optional: **`ENABLE_AUTO_SOFT_DESTROY`**, **`AUTO_SOFT_DESTROY_IDLE_DAYS`**. Details: [`infra/terraform/README.md`](infra/terraform/README.md) and [`docs-site/README.md`](docs-site/README.md).
 
 ### Required repository secrets
 

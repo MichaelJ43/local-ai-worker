@@ -1,0 +1,49 @@
+@inject Microsoft.Extensions.Options.IOptions<M43Options> M43
+@{
+    var m43 = M43.Value;
+    var baseV1 = string.IsNullOrWhiteSpace(m43.StaticAssetsBaseUrl)
+        ? ""
+        : m43.BaseForV1 + "/v1";
+}
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>@ViewData["Title"] — Local AI Worker</title>
+    @if (!string.IsNullOrEmpty(baseV1))
+    {
+        <link rel="stylesheet" href="@(baseV1)/m43-tokens.css" />
+        <link rel="stylesheet" href="@(baseV1)/m43-shell.css" />
+        <link rel="stylesheet" href="@(baseV1)/m43-primitives.css" />
+    }
+</head>
+<body class="m43 m43-page">
+    <div data-m43-auth-header></div>
+    <div class="m43-page__body m43">
+        <header class="m43-site-header">
+            <h1>Local AI Worker</h1>
+            <p class="m43-intro">Docs and downloads for the desktop worker app.</p>
+            <nav class="m43-nav">
+                <a href="/">Home</a>
+                <a href="/Download">Downloads</a>
+                <a href="https://github.com/MichaelJ43/local-ai-worker" rel="noopener">GitHub</a>
+            </nav>
+        </header>
+        <main class="m43-main">
+            @RenderBody()
+        </main>
+        <footer class="m43-site-footer">
+            <p>Open source under MIT · <a href="https://github.com/MichaelJ43/local-ai-worker">Repository</a></p>
+        </footer>
+    </div>
+    @if (!string.IsNullOrEmpty(baseV1))
+    {
+        <script src="@(baseV1)/m43-auth-header.js" defer
+                data-m43-auth
+                data-m43-api="@m43.ApiBaseUrl"
+                data-m43-auth-origin="@m43.AuthOrigin"></script>
+    }
+    @await RenderSectionAsync("Scripts", required: false)
+</body>
+</html>

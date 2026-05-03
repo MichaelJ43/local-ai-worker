@@ -13,6 +13,12 @@ app-icon.png
 /test-results/
 /playwright/.cache/
 
+# .NET docs site
+docs-site/**/bin/
+docs-site/**/obj/
+docs-site/**/out/
+docs-site/static-out/
+
 # Tauri updater signing — never commit private keys. Public key is in tauri.conf.json only.
 src-tauri/*.key
 src-tauri/*.key.pub

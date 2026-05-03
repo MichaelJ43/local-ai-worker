@@ -1,0 +1,41 @@
+@page
+@model DownloadModel
+@{
+    ViewData["Title"] = "Downloads";
+}
+
+<p class="m43-section-title">Latest release</p>
+@if (Model.ReleaseTag is null)
+{
+    <p>No published GitHub release found (or API rate limited).</p>
+}
+else
+{
+    <p>Tag: <strong>@Model.ReleaseTag</strong></p>
+    <ul>
+        @if (Model.Links.Windows != null)
+        {
+            <li><a href="@Model.Links.Windows">Windows (.msi)</a></li>
+        }
+        @if (Model.Links.MacAppleSilicon != null)
+        {
+            <li><a href="@Model.Links.MacAppleSilicon">macOS Apple Silicon (.dmg)</a></li>
+        }
+        @if (Model.Links.MacIntel != null)
+        {
+            <li><a href="@Model.Links.MacIntel">macOS Intel (.dmg)</a></li>
+        }
+        @if (Model.Links.LinuxAppImage != null)
+        {
+            <li><a href="@Model.Links.LinuxAppImage">Linux (AppImage)</a></li>
+        }
+        @if (Model.Links.LinuxDeb != null)
+        {
+            <li><a href="@Model.Links.LinuxDeb">Linux (.deb)</a></li>
+        }
+    </ul>
+    @if (Model.SuggestedUrl != null)
+    {
+        <p>Suggested for your OS: <a href="@Model.SuggestedUrl">Download</a></p>
+    }
+}

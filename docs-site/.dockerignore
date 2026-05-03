@@ -1,0 +1,8 @@
+**/bin
+**/obj
+**/out
+**/.vs
+**/*.user
+LocalAiWorker.Docs.Tests
+LocalAiWorker.Docs.UiTests
+*.sln

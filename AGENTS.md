@@ -32,6 +32,7 @@ crates/
   ai_worker_hybrid/     # Bounded Ollama + Cursor SDK bridge types (no Tauri); used by src-tauri
 cursor-agent-bridge/   # Node: @cursor/sdk CLI (cli.mjs); npm ci here before hybrid escalation
 docker/                # Dockerfile.worker, agent-loop.sh, repo-agent-loop.sh, worker-agent-common.sh, entrypoints, git/gh wraps
+docs-site/             # ASP.NET Core docs + downloads (GHCR local-ai-worker-docs; Terraform infra/terraform/docs-site-*)
 docs/                  # USER_GUIDE, COMPOSE_WORKERS, architecture, rules/rules-tree.json, schemas/
 IMPLEMENTATION_PLAN.md # Architecture notes: hybrid Ollama + Cursor SDK
 scripts/               # bump-version.mjs, inject-updater-endpoint.mjs
