@@ -31,7 +31,7 @@ dependencies = [
 
 [[package]]
 name = "ai_worker_core"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "chrono",
  "dirs 5.0.1",
@@ -49,7 +49,7 @@ dependencies = [
 
 [[package]]
 name = "ai_worker_hybrid"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "ai_worker_core",
  "serde",
@@ -61,7 +61,7 @@ dependencies = [
 
 [[package]]
 name = "ai_worker_integration"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "ai_worker_core",
  "serde_json",
@@ -70,7 +70,7 @@ dependencies = [
 
 [[package]]
 name = "ai_worker_manager"
-version = "0.1.16"
+version = "0.1.17"
 dependencies = [
  "ai_worker_core",
  "ai_worker_hybrid",
