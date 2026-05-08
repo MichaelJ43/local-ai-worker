@@ -2,8 +2,9 @@ name: Docs site auto soft destroy
 
 on:
   workflow_dispatch:
+  # Idle vs AUTO_SOFT_DESTROY_IDLE_DAYS is checked each time this runs (not continuously).
   schedule:
-    - cron: "0 15 * * 0"
+    - cron: "0 15 * * *"
 
 permissions:
   id-token: write
