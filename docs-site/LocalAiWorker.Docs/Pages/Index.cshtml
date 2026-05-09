@@ -16,7 +16,10 @@
 
 <p class="m43-section-title">What you can do</p>
 <ul>
-    <li>Bring up an <strong>Ollama Compose stack</strong> from the UI and pull models.</li>
+    <li>
+        Run <strong>Ollama inside Docker</strong> via bundled Compose — the app starts the stack automatically when you enable workers that use a <strong>loopback</strong> Ollama tier (<code>localhost</code> / <code>127.0.0.1</code>), or you can bring it up manually from diagnostics.
+        Pull models inside the container when prompted in the docs.
+    </li>
     <li>Define <strong>workers</strong> with maintenance domains, escalation tiers (Ollama and optional Cursor), and cadence or one-shot tasks.</li>
     <li>Optionally attach a <strong>GitHub repository</strong> for the structured JSON repo agent loop (<code>observe</code> / <code>apply_git</code> / <code>apply_github</code>).</li>
     <li>Use <strong>audit</strong> hooks and rolling guardrails without leaving your machine for inference.</li>

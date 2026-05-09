@@ -37,7 +37,7 @@ docs/                  # USER_GUIDE, COMPOSE_WORKERS, architecture, rules/rules-
 IMPLEMENTATION_PLAN.md # Architecture notes: hybrid Ollama + Cursor SDK
 scripts/               # bump-version.mjs, inject-updater-endpoint.mjs
 src/                   # Vite app: index.html, main.js, styles.css, updater.js → dist/
-src-tauri/             # Tauri crate: lib.rs, compose.rs, secrets.rs, worker_docker.rs, tauri.conf.json, capabilities/, resources/compose/
+src-tauri/             # Tauri crate: lib.rs, compose.rs, docker_runtime_images.rs, secrets.rs, worker_docker.rs, tauri.conf.json, capabilities/, resources/compose/, resources/docker-runtime-images.json
 test/                  # Rust integration tests (ai_worker_integration); playwright tests under test/playwright/
 Cargo.toml             # Workspace root (version in [workspace.package])
 package.json           # npm scripts; version should match workspace
@@ -122,13 +122,14 @@ Network and patch policy details: **`docs/REPO_AGENT_SANDBOX.md`**.
 ### Docker
 
 - **Compose:** `src-tauri/src/compose.rs` + bundled YAML in **`src-tauri/resources/compose/`** copied to app data before `docker compose`. The app **automatically runs `compose up/down`** when persisted workers imply a loopback Ollama stack (see `persist_llm` apply-runtime), so the UI no longer exposes manual Compose actions on Overview.
-- **Worker containers:** `worker_docker.rs` — `prepare_worker_storage`, `worker_start`, logs, etc. Image default **`local-ai-worker-agent:latest`** unless a worker overrides `dockerImage`. **`docker/entrypoint.sh`** copies **`GITHUB_TOKEN` → `GH_TOKEN`** (when set) and fixes **`GH_CONFIG_DIR`** to an ephemeral directory so **`gh`** uses the PAT in the environment—not interactive login or disk hosts.
+- **Worker containers:** `worker_docker.rs` — `prepare_worker_storage`, `worker_start`, logs, etc. Release CI sets **`LOCAL_AI_DEFAULT_WORKER_AGENT_IMAGE`** to **`ghcr.io/<owner>/local-ai-worker-agent:<semver>`**; local **`cargo`** builds default to **`local-ai-worker-agent:latest`** unless that env var is set. Registry-shaped refs are **`docker pull`**’d on start (`ensure_worker_image_available`). **`docker/entrypoint.sh`** copies **`GITHUB_TOKEN` → `GH_TOKEN`** (when set) and fixes **`GH_CONFIG_DIR`** to an ephemeral directory so **`gh`** uses the PAT in the environment—not interactive login or disk hosts.
+- **Runtime image catalog (Diagnostics):** `docker_runtime_images.rs` + **`src-tauri/resources/docker-runtime-images.json`** (keep the Ollama `pullRef` in sync with `ollama-compose.base.yml`; unit test enforces this). Canonical online copy: raw GitHub URL for that path at a release tag.
 
 ---
 
 ## Frontend (`src/`)
 
-- **`main.js`** — Navigation views, **collapsed worker cards** (summary row Enable / Edit / Remove), per-worker save/discard, LLM catalog editor (**default model dropdown** per Ollama source, populated asynchronously by `ollama_list_models`), secrets table, diagnostics, modals (domain/tasks help, session restore). **`save_workers`** and session restore **`session_resolve_restore`** return **`runtimePending`** and apply Docker/runtime in the background while the UI listens for **`runtime-phase`**, **`runtime-finished`**, and **`runtime-error`** events and shows a **`#runtime-banner`** banner.
+- **`main.js`** — Navigation views, **collapsed worker cards** (summary row Enable / Edit / Remove), per-worker save/discard, LLM catalog editor (**default model dropdown** per Ollama source, populated asynchronously by `ollama_list_models`), secrets table, diagnostics (including **Docker images** via `docker_runtime_images_status`), modals (domain/tasks help, session restore). **`save_workers`** and session restore **`session_resolve_restore`** return **`runtimePending`** and apply Docker/runtime in the background while the UI listens for **`runtime-phase`**, **`runtime-finished`**, and **`runtime-error`** events and shows a **`#runtime-banner`** banner.
 - **`index.html`** — Shell: sidebar nav (Overview, LLM sources, Workers, Secrets, Diagnostics), Compose stack **status hint** line on Overview.
 - **`styles.css`** — Layout and component styles.
 - **`updater.js`** — Update check scheduler + Tauri updater plugin.
@@ -145,7 +146,7 @@ Registered in **`src-tauri/src/lib.rs`** `generate_handler!`:
 - LLM catalog: `get_llm_sources`, `save_llm_sources` (persists **`llm_sources.json`** beside `workers.json`; migration merges legacy worker Ollama/Cursor hints)
 - Hybrid (host): `hybrid_bridge_status`, `hybrid_run_worker` (bounded local Ollama + `@cursor/sdk` via `cursor-agent-bridge`; requires Node on PATH + `npm ci` in `cursor-agent-bridge/`)
 - Secrets: `secret_keys_list`, `secret_set`, `secret_delete`, `github_token_configured`, `set_github_token`, `delete_github_token`
-- Environment: `docker_status`, `hardware_profile`, `ollama_list_models`, `ollama_stack_gpu_hint` (also used by the Overview Compose status line). Host-side `ollama_stack_up` / `down` / `status` remain callable for diagnostics / automation even though the Workers UI relies on automatic stack management after saves.
+- Environment: `docker_status`, `docker_runtime_images_status`, `hardware_profile`, `ollama_list_models`, `ollama_stack_gpu_hint` (also used by the Overview Compose status line). Host-side `ollama_stack_up` / `down` / `status` remain callable for diagnostics / automation even though the Workers UI relies on automatic stack management after saves.
 - Rules / UX: `assemble_prompt_preview`, `rules_domains_list`, `session_peek_pending_restore`, `session_resolve_restore`
 - Other: `audit_record_github`, `audit_recent_github`, `app_log_lines`, `open_external_url`
 
@@ -189,6 +190,7 @@ CI path filters (`.github/workflows/ci.yml`): changes under `src/`, `playwright`
 | Rules domains / guardrails | `docs/rules/rules-tree.json`, `rules_domains_list` consumers, USER_GUIDE if user-visible |
 | Agent task schedule semantics | `docker/agent-loop.sh`, `worker_config` / schema, UI task editors |
 | New Tauri command | `lib.rs` handler list, frontend `invoke`, optionally `capabilities` if permissions change |
+| Pin / bump bundled Ollama Compose image | `src-tauri/resources/compose/ollama-compose.base.yml` **and** matching `pullRef` in `src-tauri/resources/docker-runtime-images.json` (tests enforce sync) |
 | UI navigation / visible headings | `test/playwright/smoke.spec.js` |
 | Session / app data files | `AGENTS.md` this table, `USER_GUIDE` if user-facing |
 

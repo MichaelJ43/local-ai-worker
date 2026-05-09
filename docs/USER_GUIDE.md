@@ -34,7 +34,7 @@ Configure how the app reaches models (host, tags, related settings).
 
 ### Diagnostics
 
-Host and Docker diagnostics useful when troubleshooting compose or containers.
+Host and Docker diagnostics useful when troubleshooting compose or containers. **Docker images** lists pinned Compose images, the bundled default worker image reference, and each worker’s resolved image, with whether Docker already has the image locally (`docker image inspect`).
 
 ![Diagnostics panel](images/diagnostics.png)
 
@@ -44,27 +44,36 @@ End-to-end flows from setup through a running worker.
 
 ```mermaid
 flowchart TD
-  subgraph setup["First-time setup"]
-    P[Install Docker Desktop Rust Node]
-    B[Build worker image local-ai-worker-agent:latest]
-    AP[Start desktop app]
-    P --> B --> AP
+  subgraph setupRelease["First-time setup release installer"]
+    DR[Install Docker Desktop or Engine]
+    IN[Install desktop app from Releases]
+    DR --> IN
   end
 
-  subgraph stack["Ollama stack"]
-    U[Compose up from UI]
-    M[Pull model in Ollama container]
-    U --> M
+  subgraph setupDev["Optional develop from source"]
+    DEV[Install Rust Node Docker]
+    IMG[Build worker image or set LOCAL_AI_DEFAULT_WORKER_AGENT_IMAGE]
+    RUN[npm install npm run tauri dev]
+    DEV --> IMG --> RUN
+  end
+
+  subgraph stack["Ollama stack Docker container"]
+    AU[Enable worker with loopback Ollama tier Save workers auto compose up]
+    MU[Manual Compose up from diagnostics optional]
+    PM[Pull model in Ollama container]
+    AU --> PM
+    MU --> PM
   end
 
   subgraph lifecycle["Worker lifecycle"]
     T[Save GitHub token Secrets]
     W[Add or edit workers Save workers]
     S[Prepare storage context volume optional repo checkout]
-    R[Start or recreate container]
+    R[Start pulls GHCR or registry image if needed]
     L[Agent loop ↔ Ollama context git gh guardrails]
-    AP --> U
-    M --> T
+    IN --> AU
+    RUN --> AU
+    PM --> T
     T --> W --> S --> R --> L
   end
 ```
@@ -75,7 +84,7 @@ At runtime the desktop UI invokes **Tauri commands**, which persist **`workers.j
 
 ## What it does
 
-- Runs **Ollama** via **Docker Compose** (bundled YAML + optional GPU file) or your own compose at the repo root.
+- Runs **Ollama** only via **Docker Compose** (bundled YAML + optional GPU file copied under app data), not as a host daemon. You can still mirror the same stack with the repo root `docker-compose.yml`.
 - Manages **workers**: JSON config, optional **guardrail overrides**, **tasks** (one-shot or cadence).
 - Prepares **per-worker storage**: context file on disk + Docker **volume** for long-term data, then can **start/stop/recreate** an **agent container**.
 - **Agent loop** (in the worker image): background script calls **Ollama** on a poll interval, sends tasks + context, and updates `context.json` (requires a pulled model and running Ollama stack).
@@ -85,17 +94,28 @@ At runtime the desktop UI invokes **Tauri commands**, which persist **`workers.j
 
 ## First-time setup
 
-1. Install **Docker Desktop**, **Rust**, **Node.js**.
-2. Build the agent image (used by worker containers):
+### Using a release installer
+
+1. Install **Docker** (Docker Desktop on macOS/Windows, or Docker Engine + Compose on Linux) and confirm **`docker info`** works (Overview / Diagnostics show **Docker: OK**).
+2. Install the app from **GitHub Releases**. Releases compile in a default **GHCR** worker image (`ghcr.io/<owner>/local-ai-worker-agent:<appVersion>`); starting a worker runs **`docker pull`** when needed — no local `docker build` for normal use.
+3. In **LLM sources**, keep (or add) an Ollama tier pointing at **loopback** (`http://127.0.0.1:11434` or `localhost`). When you **enable** a worker that uses that tier and **Save workers**, the app runs **Compose up** for the bundled Ollama stack automatically (optional GPU merge when `nvidia-smi` is present). You can still use **Ollama stack → Compose up** manually from diagnostics.
+4. Pull a model inside the container, e.g. `docker exec -it local-ai-ollama ollama pull gemma4:e2b`.
+5. Save your **GitHub token** under **Secrets** if workers need GitHub or private repos.
+
+Use **Diagnostics → Docker images** to see which refs will be pulled and whether they are already present locally.
+
+### Developing from this repository
+
+1. Install **Rust**, **Node.js**, and **Docker** as above.
+2. Default **`cargo`** builds use **`local-ai-worker-agent:latest`** unless you set **`LOCAL_AI_DEFAULT_WORKER_AGENT_IMAGE`** to a GHCR tag before building (same mechanism as release CI). Either build from source:
 
    ```bash
    docker build -f docker/Dockerfile.worker -t local-ai-worker-agent:latest .
    ```
 
-3. Start the app (`npm install` then `npm run tauri dev`).
-4. **Ollama stack → Compose up** (pick GPU mode if appropriate).
-5. Pull a model, e.g. `docker exec -it local-ai-ollama ollama pull gemma4:e2b`.
-6. Save your **GitHub token** in the app.
+   …or point the env var at a published GHCR image and rebuild the app.
+
+3. Run `npm install` then `npm run tauri dev`.
 
 ### GitHub token (PAT) — not `gh auth login`
 
@@ -117,9 +137,9 @@ Worker containers do **not** use interactive **`gh auth login`**. The entrypoint
    - `OLLAMA_HOST` (per worker or default `http://host.docker.internal:11434`)
    - `GITHUB_TOKEN` if you saved a token
    - **`AI_WORKER_REPO=owner/repo`** (optional): required when **repository allowlist** is enforced so `git`/`gh` wrappers can validate scope.
-4. **Recreate** = stop + start (fresh container, same mounts). Rebuild the image after pulling app updates that change `worker-guard` or the agent scripts.
+4. **Recreate** = stop + start (fresh container, same mounts). After upgrading the app, **`docker pull`** the default GHCR tag (see **Diagnostics → Docker images** for the resolved ref) so worker containers match the release.
 
-Default image: `local-ai-worker-agent:latest` (override per worker as **Docker image**).
+**Default image:** release installers embed **`ghcr.io/<owner>/local-ai-worker-agent:<version>`**; local dev builds default to **`local-ai-worker-agent:latest`**. Override per worker as **Docker image** when needed.
 
 ### Repository checkout + repo agent loop (structured JSON)
 
@@ -133,7 +153,8 @@ If you set **GitHub repository URL** (and optionally **Starting branch or ref**)
 - **Allowed test profiles (JSON)**: optional whitelisted commands (bare names like `npm` or `pnpm`, no path separators) plus `argv`. They run from the repo root **after** model-proposed commands each cycle, only when the tier is **`apply_git`** or **`apply_github`**. Extend the worker image if those tools are missing.
 - **Secrets**: host clone/fetch uses the same saved **GitHub token** as the container (never shown in the UI log file; best-effort patterns are still redacted from context + `repo-agent-runtime.log`).
 
-Rebuild the worker image after upgrading agent scripts:  
+End users on releases should **`docker pull`** the matching GHCR worker tag after upgrades. Contributors changing **`docker/`** scripts or **`worker-guard`** should rebuild locally:
+
 `docker build -f docker/Dockerfile.worker -t local-ai-worker-agent:latest .`
 
 See **`docs/REPO_AGENT_SANDBOX.md`** for sandbox policy flags and Docker network tradeoffs.
