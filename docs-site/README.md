@@ -6,7 +6,7 @@ ASP.NET Core 8 Razor site for **https://aiworkers.michaelj43.dev** (and static S
 
 | Path | Content |
 |------|---------|
-| `/` | Product overview, capabilities, screenshot grid |
+| `/` | Product overview, capabilities, single Overview screenshot |
 | `/GettingStarted` | Curated first-run steps (install, Ollama, token, first worker) |
 | `/Guide` | Renders repo [`docs/USER_GUIDE.md`](../docs/USER_GUIDE.md) (Markdig + Mermaid) |
 | `/Architecture` | Renders [`docs/architecture.md`](../docs/architecture.md) |
