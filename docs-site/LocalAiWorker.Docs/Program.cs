@@ -1,6 +1,13 @@
 using LocalAiWorker.Docs;
 using LocalAiWorker.Docs.Services;
-var builder = WebApplication.CreateBuilder(args);
+
+// Use build output as content root so linked wwwroot assets (e.g. docs/images → wwwroot/images)
+// resolve under dotnet run as well as publish/Docker (assembly dir already contains appsettings + docs/*.md).
+var builder = WebApplication.CreateBuilder(new WebApplicationOptions
+{
+    Args = args,
+    ContentRootPath = AppContext.BaseDirectory,
+});
 
 builder.Services.AddRazorPages();
 builder.Services.AddMemoryCache();
