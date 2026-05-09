@@ -3,6 +3,7 @@ FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY docs-site/LocalAiWorker.Docs/ ./LocalAiWorker.Docs/
 COPY docs/images/ ./docs/images/
+COPY docs/*.md ./docs/
 WORKDIR /src/LocalAiWorker.Docs
 RUN dotnet publish -c Release -o /app /p:UseAppHost=false
 

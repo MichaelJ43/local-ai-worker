@@ -43,6 +43,40 @@ public sealed class SmokeTests
     }
 
     [Test]
+    public async Task Guide_contains_title_heading()
+    {
+        var page = await _browser.NewPageAsync();
+        try
+        {
+            await page.GotoAsync(BaseUrl.TrimEnd('/') + "/Guide");
+            var body = await page.Locator("body").InnerTextAsync();
+            StringAssert.Contains("Local AI Worker", body);
+            StringAssert.Contains("User guide", body);
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
+    [Test]
+    public async Task GettingStarted_loads()
+    {
+        var page = await _browser.NewPageAsync();
+        try
+        {
+            await page.GotoAsync(BaseUrl.TrimEnd('/') + "/GettingStarted");
+            var body = await page.Locator("body").InnerTextAsync();
+            StringAssert.Contains("Getting started", body);
+            StringAssert.Contains("Docker Desktop", body);
+        }
+        finally
+        {
+            await page.CloseAsync();
+        }
+    }
+
+    [Test]
     public async Task Health_returns_json()
     {
         var page = await _browser.NewPageAsync();

@@ -10,7 +10,9 @@
 <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Local AI Worker — desktop app for Docker-hosted Ollama workers, guardrails, and optional repo agents. Documentation and downloads." />
     <title>@ViewData["Title"] — Local AI Worker</title>
+    @await RenderSectionAsync("Head", required: false)
     @if (!string.IsNullOrEmpty(baseV1))
     {
         <link rel="stylesheet" href="@(baseV1)/m43-tokens.css" />
@@ -23,18 +25,21 @@
     <div class="m43-page__body m43">
         <header class="m43-site-header">
             <h1>Local AI Worker</h1>
-            <p class="m43-intro">Docs and downloads for the desktop worker app.</p>
+            <p class="m43-intro">Documentation and downloads for the desktop worker app.</p>
             <nav class="m43-nav">
                 <a href="/">Home</a>
+                <a href="/GettingStarted">Getting started</a>
+                <a href="/Guide">User guide</a>
+                <a href="/Architecture">Architecture</a>
+                <a href="/RepoAgentSandbox">Repo sandbox</a>
                 <a href="/Download">Downloads</a>
-                <a href="https://github.com/MichaelJ43/local-ai-worker" rel="noopener">GitHub</a>
             </nav>
         </header>
         <main class="m43-main">
             @RenderBody()
         </main>
         <footer class="m43-site-footer">
-            <p>Open source under MIT · <a href="https://github.com/MichaelJ43/local-ai-worker">Repository</a></p>
+            <p>Open source under MIT · <a href="https://github.com/MichaelJ43/local-ai-worker" rel="noopener">Source on GitHub</a></p>
         </footer>
     </div>
     @if (!string.IsNullOrEmpty(baseV1))

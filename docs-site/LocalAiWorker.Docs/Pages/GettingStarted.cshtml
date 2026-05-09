@@ -1,0 +1,53 @@
+@page "/GettingStarted"
+@model GettingStartedModel
+@{
+    ViewData["Title"] = "Getting started";
+}
+
+@section Head {
+    <link rel="stylesheet" href="~/css/docs-content.css" asp-append-version="true" />
+}
+
+<p class="m43-section-title">Getting started</p>
+<p class="m43-intro">Quick path from install to a running worker.</p>
+
+<p class="m43-section-title">Before you install</p>
+<ul>
+    <li><strong>Docker Desktop</strong> — Ollama and worker containers run through Docker.</li>
+    <li>A <strong>GitHub personal access token</strong> if workers use private repos or <code>gh</code>; stored in your OS secure store (Windows Credential Manager / macOS Keychain).</li>
+</ul>
+
+<p class="m43-section-title">Install the app</p>
+<ol class="m43-getting-started">
+    <li>Open <a href="/Download">Downloads</a> and install the build for your OS (Windows installer, macOS <code>.dmg</code>, Linux AppImage or <code>.deb</code>).</li>
+    <li>
+        Build the worker Docker image once (used by every worker container). From a <strong>clone of this repository</strong> at a tag matching your app version when possible:
+        <pre><code>docker build -f docker/Dockerfile.worker -t local-ai-worker-agent:latest .</code></pre>
+    </li>
+</ol>
+
+<p class="m43-section-title">Ollama stack</p>
+<ol class="m43-getting-started">
+    <li>Launch Local AI Worker.</li>
+    <li>Use <strong>Ollama stack → Compose up</strong> on the Overview screen so the bundled Compose file runs (optional GPU mode if you use NVIDIA).</li>
+    <li>Pull a model into the Ollama container, for example:
+        <pre><code>docker exec -it local-ai-ollama ollama pull gemma4:e2b</code></pre>
+    </li>
+</ol>
+
+<p class="m43-section-title">Secrets</p>
+<p>In the app, open <strong>Secrets</strong> and save your GitHub token. Worker containers receive <code>GITHUB_TOKEN</code> from this value; they do not use interactive <code>gh auth login</code>.</p>
+
+<p class="m43-section-title">First worker</p>
+<ol class="m43-getting-started">
+    <li>Go to <strong>Workers</strong>, add a worker, choose a maintenance domain and model escalation path, then <strong>Save workers</strong>.</li>
+    <li><strong>Prepare storage</strong> — creates context and materialized config under your app data directory.</li>
+    <li><strong>Start</strong> (or recreate) — runs the agent container with mounts for context, guardrails, and optional repo checkout.</li>
+</ol>
+
+<p class="m43-section-title">Learn more</p>
+<ul>
+    <li><a href="/Guide">Full user guide</a> — UI tour, process overview, repo agent modes, audit, data paths.</li>
+    <li><a href="/Architecture">Architecture</a> — how the UI, Tauri host, core crate, Docker, and Ollama fit together.</li>
+    <li><a href="/RepoAgentSandbox">Repo agent sandbox</a> — networking and <code>repoSandboxPolicy</code> when using the structured repo agent loop.</li>
+</ul>

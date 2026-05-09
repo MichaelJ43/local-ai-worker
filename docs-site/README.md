@@ -2,6 +2,19 @@
 
 ASP.NET Core 8 Razor site for **https://aiworkers.michaelj43.dev** (and static S3/CloudFront when parked).
 
+## Site map
+
+| Path | Content |
+|------|---------|
+| `/` | Product overview, capabilities, screenshot grid |
+| `/GettingStarted` | Curated first-run steps (install, Ollama, token, first worker) |
+| `/Guide` | Renders repo [`docs/USER_GUIDE.md`](../docs/USER_GUIDE.md) (Markdig + Mermaid) |
+| `/Architecture` | Renders [`docs/architecture.md`](../docs/architecture.md) |
+| `/RepoAgentSandbox` | Renders [`docs/REPO_AGENT_SANDBOX.md`](../docs/REPO_AGENT_SANDBOX.md) |
+| `/Download` | Latest installers via GitHub Releases API |
+
+Bundled markdown files are copied next to the published DLL (`docs/*.md`) via `LocalAiWorker.Docs.csproj`. Diagrams use **Mermaid** (`wwwroot/lib/mermaid/mermaid.min.js`, vendored). Changing user-facing docs under `docs/**/*.md` triggers **docs-site CI/deploy** workflows.
+
 ## Local run
 
 ```bash
@@ -38,7 +51,7 @@ docker run --rm -p 8080:8080 -e M43__StaticAssetsBaseUrl="https://static.michael
 
 ## Static export (Soft-Destroy)
 
-With the published app listening on `DOCS_URL`:
+With the published app listening on `DOCS_URL`, [`scripts/static-export.sh`](scripts/static-export.sh) snapshots `/`, `/Download`, `/GettingStarted`, `/Guide`, `/Architecture`, and `/RepoAgentSandbox` plus `docs/images` into `OUT_DIR`.
 
 ```bash
 chmod +x docs-site/scripts/static-export.sh

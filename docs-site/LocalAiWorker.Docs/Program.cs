@@ -12,6 +12,7 @@ builder.Services.AddHttpClient<GitHubReleaseClient>((sp, client) =>
     client.DefaultRequestHeaders.Accept.ParseAdd("application/vnd.github+json");
 });
 builder.Services.AddSingleton<ReleaseAssetPicker>();
+builder.Services.AddSingleton<DocsMarkdownRenderer>();
 
 var app = builder.Build();
 
