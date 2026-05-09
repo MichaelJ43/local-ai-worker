@@ -62,24 +62,12 @@
   margin: 0.65rem 0;
 }
 
-.m43-screenshot-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
-  gap: 1.25rem;
-  margin-top: 1rem;
+.m43-home-overview {
+  margin: 1rem 0 0;
+  max-width: 42rem;
 }
 
-.m43-screenshot-grid figure {
-  margin: 0;
-}
-
-.m43-screenshot-grid figcaption {
-  margin-top: 0.35rem;
-  font-size: 0.9rem;
-  opacity: 0.85;
-}
-
-.m43-screenshot-grid img {
+.m43-home-overview img {
   width: 100%;
   height: auto;
   border-radius: 4px;
