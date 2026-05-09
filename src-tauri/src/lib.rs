@@ -1,6 +1,7 @@
 //! Tauri backend: workers persistence, secrets, Docker/Ollama helpers.
 
 mod compose;
+mod docker_runtime_images;
 mod hybrid;
 mod persist_llm;
 mod secrets;
@@ -252,6 +253,13 @@ fn docker_status() -> DockerStatus {
         available: true,
         version: docker::docker_version_summary().ok(),
     }
+}
+
+#[tauri::command]
+fn docker_runtime_images_status() -> Result<Vec<docker_runtime_images::DockerRuntimeImageRow>, String> {
+    persist_llm::ensure_migration()?;
+    let workers = read_workers_disk_internal()?;
+    docker_runtime_images::docker_runtime_images_status(&workers)
 }
 
 #[tauri::command]
@@ -675,6 +683,7 @@ pub fn run() {
             save_llm_sources,
             delete_worker,
             docker_status,
+            docker_runtime_images_status,
             default_worker_agent_image,
             worker_registry_images_refresh,
             hardware_profile,

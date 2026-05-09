@@ -136,6 +136,30 @@
           <div class="view" data-view="diagnostics">
             <div class="view-grid">
               <section class="panel wide">
+                <h2>Docker images</h2>
+                <p class="hint">
+                  Images the app may pull for the bundled Ollama stack and worker containers (including per-worker overrides).
+                  Release installers default to a public <strong>GHCR</strong> worker image; local availability is checked via the Docker CLI.
+                </p>
+                <p id="docker-images-msg" class="status compact"></p>
+                <div class="row">
+                  <button type="button" id="btn-docker-images-refresh">Refresh</button>
+                </div>
+                <div class="secrets-table-wrap">
+                  <table class="secrets-table" aria-label="Runtime Docker images">
+                    <thead>
+                      <tr>
+                        <th>Image</th>
+                        <th>Role</th>
+                        <th>Local</th>
+                        <th>Image ID</th>
+                      </tr>
+                    </thead>
+                    <tbody id="docker-images-tbody"></tbody>
+                  </table>
+                </div>
+              </section>
+              <section class="panel wide">
                 <h2>Prompt preview (rules + domain)</h2>
                 <label>
                   <span>Domain</span>

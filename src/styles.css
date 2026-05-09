@@ -425,6 +425,11 @@ button.small-pad {
   margin: 0.25rem 0 0;
 }
 
+.hint.tight {
+  margin: 0.15rem 0 0;
+  font-size: 0.72rem;
+}
+
 .workers {
   display: flex;
   flex-direction: column;

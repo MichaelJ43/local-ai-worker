@@ -18,8 +18,10 @@ Desktop app (Tauri + Rust) to manage autonomous AI workers against **Docker-host
 
 ## Quick start
 
-1. **Ollama via the app (recommended)**  
-   Open the app and use **Ollama stack → Compose up**. The app writes bundled YAML to your app data directory (see the UI for the path) and runs `docker compose` with optional **GPU** merge when `nvidia-smi` is available (or you can force CPU/GPU in the dropdown).
+1. **Ollama via Docker (recommended)**  
+   You do **not** install Ollama on the host: the app ships bundled Compose that runs the `ollama/ollama` image. When you **enable** a worker whose escalation path uses **loopback** Ollama (`localhost` / `127.0.0.1`) and **Save workers**, the app writes YAML under app data and runs **`docker compose up`** automatically (optional **GPU** merge when `nvidia-smi` is present). You can still start the stack manually from diagnostics (**Ollama stack → Compose up**) if you prefer.
+
+   Official installers default to a **GHCR** worker image and **`docker pull`** it when you start a worker — no `docker build` required for normal use.
 
    Then pull a model (once the container is up):
 

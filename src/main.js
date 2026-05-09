@@ -167,6 +167,9 @@ document.querySelectorAll(".nav-item").forEach((btn) => {
       await loadLlmSources();
       renderLlmSourcesEditor();
     }
+    if (btn.dataset.nav === "diagnostics") {
+      refreshDockerRuntimeImages().catch(() => {});
+    }
   });
 });
 
@@ -212,6 +215,52 @@ async function maybeShowRestorePrompt() {
   } catch (e) {
     console.warn(e);
   }
+}
+
+function formatDockerImageCategory(category) {
+  if (category === "ollama_stack") return "Ollama stack";
+  if (category === "worker_agent") return "Worker agent";
+  return category || "—";
+}
+
+async function refreshDockerRuntimeImages() {
+  const msg = document.getElementById("docker-images-msg");
+  const tbody = document.getElementById("docker-images-tbody");
+  if (!msg || !tbody) return;
+  try {
+    const docker = await invoke("docker_status");
+    const rows = await invoke("docker_runtime_images_status");
+    if (!docker.available) {
+      msg.textContent =
+        "Docker is unavailable — install Docker Desktop (macOS/Windows) or Docker Engine + Compose (Linux), start the daemon, and ensure `docker info` works. Linux users may need membership in the `docker` group. Image rows still list refs the app will try to pull when needed.";
+    } else {
+      msg.textContent = "";
+    }
+    tbody.replaceChildren();
+    for (const r of rows) {
+      const tr = document.createElement("tr");
+      const idShort =
+        r.imageId && r.imageId.length > 14 ? `${r.imageId.slice(0, 12)}…` : r.imageId || "—";
+      tr.innerHTML = `<td><span class="docker-img-ref" title="${escapeAttr(r.displayName)}">${escapeHtml(
+        r.pullRef,
+      )}</span><div class="hint tight">${escapeHtml(r.displayName)}</div></td>
+        <td>${escapeHtml(formatDockerImageCategory(r.category))}</td>
+        <td>${r.presentLocally ? "yes" : "no"}</td>
+        <td><code>${escapeHtml(idShort)}</code></td>`;
+      tbody.appendChild(tr);
+    }
+  } catch (e) {
+    msg.textContent = String(e);
+    tbody.replaceChildren();
+  }
+}
+
+function escapeHtml(s) {
+  return String(s)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;");
 }
 
 async function refreshEnv() {
@@ -1461,6 +1510,9 @@ document.getElementById("btn-preview-prompt").addEventListener("click", async ()
 
 document.getElementById("btn-audit-refresh").addEventListener("click", refreshAudit);
 document.getElementById("btn-app-log-refresh").addEventListener("click", refreshAppLog);
+document.getElementById("btn-docker-images-refresh")?.addEventListener("click", () => {
+  refreshDockerRuntimeImages().catch(() => {});
+});
 
 async function boot() {
   await bindRuntimeListeners().catch(() => {});
@@ -1480,6 +1532,7 @@ async function boot() {
   await loadRulesDomains();
   refreshEnv();
   refreshComposeHint().catch(() => {});
+  refreshDockerRuntimeImages().catch(() => {});
   refreshAppLog().catch(() => {});
   refreshAudit().catch(() => {});
   refreshSecretsTable().catch((e) => {

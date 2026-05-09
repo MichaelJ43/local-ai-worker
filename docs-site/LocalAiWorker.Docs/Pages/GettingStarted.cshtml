@@ -13,30 +13,54 @@
 
 <p class="m43-section-title">Before you install</p>
 <ul>
-    <li><strong>Docker Desktop</strong> — Ollama and worker containers run through Docker.</li>
-    <li>A <strong>GitHub personal access token</strong> if workers use private repos or <code>gh</code>; stored in your OS secure store (Windows Credential Manager / macOS Keychain).</li>
+    <li>
+        <strong>Docker</strong> — Install <strong>Docker Desktop</strong> (macOS / Windows) or <strong>Docker Engine</strong> with the Compose plugin (Linux). Start the daemon so <code>docker info</code> succeeds.
+        On Linux, your user may need membership in the <code>docker</code> group. In the app, open <strong>Diagnostics</strong> and confirm the environment line shows <strong>Docker: OK</strong>.
+    </li>
+    <li>
+        You do <strong>not</strong> install Ollama on the host: the app runs the official <code>ollama/ollama</code> container from bundled Compose.
+    </li>
+    <li>
+        A <strong>GitHub personal access token</strong> if workers use private repos or <code>gh</code>; stored in your OS secure store (Windows Credential Manager / macOS Keychain).
+    </li>
 </ul>
 
 <p class="m43-section-title">Install the app</p>
 <ol class="m43-getting-started">
     <li>Open <a href="/Download">Downloads</a> and install the build for your OS (Windows installer, macOS <code>.dmg</code>, Linux AppImage or <code>.deb</code>).</li>
     <li>
-        Build the worker Docker image once (used by every worker container). From a <strong>clone of this repository</strong> at a tag matching your app version when possible:
-        <pre><code>docker build -f docker/Dockerfile.worker -t local-ai-worker-agent:latest .</code></pre>
+        <strong>Worker container image</strong> — Official releases embed a default image reference on <strong>GitHub Container Registry</strong> (<code>ghcr.io/…/local-ai-worker-agent:&lt;version&gt;</code>, public pull).
+        When you <strong>Start</strong> a worker, the app runs <code>docker pull</code> as needed; you do not need to clone the repository or <code>docker build</code> the worker image for normal use.
     </li>
 </ol>
 
+<p class="m43-section-title">Building from source (contributors)</p>
+<p class="m43-intro">
+    Local <code>cargo</code> builds default the worker image to <code>local-ai-worker-agent:latest</code> unless you set <code>LOCAL_AI_DEFAULT_WORKER_AGENT_IMAGE</code> (release CI points this at GHCR).
+    Either build the image from the repo (<code>docker build -f docker/Dockerfile.worker -t local-ai-worker-agent:latest .</code>) or set the env var to a published GHCR tag before building the app.
+</p>
+
 <p class="m43-section-title">Ollama stack</p>
 <ol class="m43-getting-started">
-    <li>Launch Local AI Worker.</li>
-    <li>Use <strong>Ollama stack → Compose up</strong> on the Overview screen so the bundled Compose file runs (optional GPU mode if you use NVIDIA).</li>
-    <li>Pull a model into the Ollama container, for example:
+    <li>Launch Local AI Worker and configure <strong>LLM sources</strong> so at least one Ollama tier uses <code>localhost</code> or <code>127.0.0.1</code> (the default loopback URL).</li>
+    <li>
+        When you <strong>enable</strong> a worker that uses that tier and <strong>Save workers</strong>, the app brings up the bundled Compose project automatically (GPU compose merge when <code>nvidia-smi</code> is detected).
+        You can still use host diagnostics commands <strong>Ollama stack → Compose up / down / status</strong> if you prefer to start the stack manually.
+    </li>
+    <li>
+        Pull a model into the Ollama container (one-time per model), for example:
         <pre><code>docker exec -it local-ai-ollama ollama pull gemma4:e2b</code></pre>
     </li>
 </ol>
 
 <p class="m43-section-title">Secrets</p>
 <p>In the app, open <strong>Secrets</strong> and save your GitHub token. Worker containers receive <code>GITHUB_TOKEN</code> from this value; they do not use interactive <code>gh auth login</code>.</p>
+
+<p class="m43-section-title">Docker images reference</p>
+<p>
+    The desktop app embeds a small catalog (<code>src-tauri/resources/docker-runtime-images.json</code> in the repository) listing the pinned Ollama stack image; the <strong>Diagnostics → Docker images</strong> table merges that catalog with your bundled default worker image and any per-worker image overrides, and shows whether each ref is already present locally.
+    The same JSON file is available at a stable raw URL for any release tag on GitHub (for example <code>https://raw.githubusercontent.com/&lt;owner&gt;/&lt;repo&gt;/v&lt;version&gt;/src-tauri/resources/docker-runtime-images.json</code>).
+</p>
 
 <p class="m43-section-title">First worker</p>
 <ol class="m43-getting-started">
