@@ -1,0 +1,75 @@
+/* Rendered markdown (USER_GUIDE, architecture, sandbox) */
+.m43-doc {
+  max-width: 52rem;
+}
+
+.m43-doc h1,
+.m43-doc h2,
+.m43-doc h3 {
+  margin-top: 1.5rem;
+  margin-bottom: 0.75rem;
+}
+
+.m43-doc p,
+.m43-doc li {
+  line-height: 1.55;
+}
+
+.m43-doc img {
+  max-width: 100%;
+  height: auto;
+  border-radius: 4px;
+}
+
+.m43-doc pre {
+  overflow-x: auto;
+  padding: 0.75rem 1rem;
+  border-radius: 4px;
+}
+
+.m43-doc code {
+  font-size: 0.92em;
+}
+
+.m43-doc table {
+  border-collapse: collapse;
+  width: 100%;
+  margin: 1rem 0;
+}
+
+.m43-doc th,
+.m43-doc td {
+  border: 1px solid rgba(127, 127, 127, 0.35);
+  padding: 0.35rem 0.6rem;
+  text-align: left;
+}
+
+.m43-getting-started ol {
+  padding-left: 1.25rem;
+}
+
+.m43-getting-started li {
+  margin: 0.5rem 0;
+  line-height: 1.5;
+}
+
+.m43-card-links {
+  list-style: none;
+  padding-left: 0;
+}
+
+.m43-card-links li {
+  margin: 0.65rem 0;
+}
+
+.m43-home-overview {
+  margin: 1rem 0 0;
+  max-width: 42rem;
+}
+
+.m43-home-overview img {
+  width: 100%;
+  height: auto;
+  border-radius: 4px;
+  vertical-align: middle;
+}

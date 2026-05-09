@@ -8,6 +8,10 @@ OUT="${OUT_DIR:-$ROOT/docs-site/static-out}"
 mkdir -p "$OUT/Download"
 curl -fsSL "$URL/" -o "$OUT/index.html"
 curl -fsSL -L "$URL/Download" -o "$OUT/Download/index.html" || curl -fsSL -L "$URL/Download/" -o "$OUT/Download/index.html"
+for segment in GettingStarted Guide Architecture RepoAgentSandbox; do
+  mkdir -p "$OUT/$segment"
+  curl -fsSL -L "$URL/$segment" -o "$OUT/$segment/index.html"
+done
 mkdir -p "$OUT/images"
 if [[ -d "$ROOT/docs/images" ]]; then
   cp -R "$ROOT/docs/images/." "$OUT/images/" || true

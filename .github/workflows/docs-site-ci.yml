@@ -5,11 +5,13 @@ on:
     branches: [main, master]
     paths:
       - "docs-site/**"
+      - "docs/**/*.md"
       - ".github/workflows/docs-site-ci.yml"
   pull_request:
     branches: [main, master]
     paths:
       - "docs-site/**"
+      - "docs/**/*.md"
       - ".github/workflows/docs-site-ci.yml"
 
 permissions:

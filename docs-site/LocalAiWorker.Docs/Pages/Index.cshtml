@@ -4,21 +4,34 @@
     ViewData["Title"] = "Home";
 }
 
-<p class="m43-section-title">Overview</p>
-<p>
-    Local AI Worker is a Tauri desktop app that manages autonomous workers against Docker-hosted Ollama,
-    with rules trees, audit hooks, and GitHub token storage via the OS keychain.
+@section Head {
+    <link rel="stylesheet" href="~/css/docs-content.css" asp-append-version="true" />
+}
+
+<p class="m43-intro">
+    Local AI Worker is a desktop app (Tauri + Rust) that runs <strong>autonomous workers</strong> against
+    <strong>Ollama in Docker</strong>: scheduled tasks, domain guardrails, optional repo-backed agents with guarded
+    <code>git</code>/<code>gh</code>, and secrets stored in your OS keychain.
 </p>
 
-<p class="m43-section-title">Documentation</p>
+<p class="m43-section-title">What you can do</p>
 <ul>
-    <li><a href="https://github.com/MichaelJ43/local-ai-worker/blob/main/docs/USER_GUIDE.md">User guide (GitHub)</a></li>
-    <li><a href="https://github.com/MichaelJ43/local-ai-worker/blob/main/README.md">README</a></li>
+    <li>Bring up an <strong>Ollama Compose stack</strong> from the UI and pull models.</li>
+    <li>Define <strong>workers</strong> with maintenance domains, escalation tiers (Ollama and optional Cursor), and cadence or one-shot tasks.</li>
+    <li>Optionally attach a <strong>GitHub repository</strong> for the structured JSON repo agent loop (<code>observe</code> / <code>apply_git</code> / <code>apply_github</code>).</li>
+    <li>Use <strong>audit</strong> hooks and rolling guardrails without leaving your machine for inference.</li>
 </ul>
 
-<p class="m43-section-title">Screenshots</p>
-<p class="m43-intro">Images from the in-repo docs bundle (when present under <code>wwwroot/images</code>).</p>
-<div class="m43-nav" style="flex-direction: column; align-items: flex-start">
-    <a href="/images/overview.png">overview.png</a>
-    <a href="/images/workers.png">workers.png</a>
-</div>
+<p class="m43-section-title">Start here</p>
+<ul class="m43-card-links">
+    <li><a href="/GettingStarted"><strong>Getting started</strong></a> — install, Ollama stack, token, first worker.</li>
+    <li><a href="/Guide"><strong>User guide</strong></a> — full UI tour, flows, workers, repo agent, data locations.</li>
+    <li><a href="/Download"><strong>Downloads</strong></a> — latest installers from GitHub Releases (linked by this site).</li>
+    <li><a href="/Architecture"><strong>Architecture</strong></a> — how the UI, host, core library, Docker, and Ollama connect.</li>
+</ul>
+
+<p class="m43-section-title">Overview</p>
+<p class="m43-intro">Environment panel in the desktop app (hardware hints, Ollama stack, quick start).</p>
+<figure class="m43-home-overview">
+    <a href="/images/overview.png"><img src="/images/overview.png" alt="Overview environment panel in Local AI Worker" loading="lazy" /></a>
+</figure>

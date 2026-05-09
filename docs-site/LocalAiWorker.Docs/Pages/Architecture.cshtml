@@ -1,0 +1,23 @@
+@page "/Architecture"
+@model ArchitectureModel
+@{
+    ViewData["Title"] = "Architecture";
+}
+
+@section Head {
+    <link rel="stylesheet" href="~/css/docs-content.css" asp-append-version="true" />
+}
+
+<article class="m43-doc">
+    @Html.Raw(Model.HtmlContent)
+</article>
+
+@section Scripts {
+    <script src="~/lib/mermaid/mermaid.min.js" asp-append-version="true"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', function () {
+            if (typeof mermaid === 'undefined') return;
+            mermaid.initialize({ startOnLoad: true, theme: 'neutral' });
+        });
+    </script>
+}
