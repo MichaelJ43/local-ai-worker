@@ -33,12 +33,12 @@ If the ALB stack runs outside **`us-east-1`**, request a separate us-east-1 cert
 
 ## Soft destroy / DNS
 
-After static content is live on CloudFront, update the Route53 apex alias from ALB to CloudFront. If Terraform managed the apex record in the fargate stack, remove it from state before destroying fargate so DNS is not deleted unintentionally:
+After static content is live on CloudFront, soft destroy **automates** Route53 apex cutover and Fargate teardown (see [`.github/workflows/docs-site-soft-destroy.yml`](../../.github/workflows/docs-site-soft-destroy.yml)).
+
+Manual equivalent if you need to run locally:
 
 ```bash
 cd infra/terraform/docs-site-fargate
 terraform state rm aws_route53_record.apex
 terraform destroy
 ```
-
-Automating this cutover is tracked in [`.github/workflows/docs-site-soft-destroy.yml`](../../.github/workflows/docs-site-soft-destroy.yml) (extend with `aws route53 change-resource-record-sets`).
