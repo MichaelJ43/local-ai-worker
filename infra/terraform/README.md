@@ -22,7 +22,14 @@ Pass variables with `-var` / `TF_VAR_*` or a `terraform.tfvars` file (do not com
 
 ## CloudFront certificate
 
-`docs-site-static` requires **`TF_VAR_cloudfront_certificate_arn`** for an ACM certificate in **`us-east-1`** (CloudFront requirement). Store it as GitHub secret **`TF_CLOUDFRONT_ACM_CERTIFICATE_ARN`** (can match your wildcard apex cert if issued in us-east-1).
+`docs-site-static` requires **`TF_VAR_cloudfront_certificate_arn`** for an ACM certificate in **`us-east-1`** (CloudFront requirement).
+
+Soft/full destroy workflows resolve the ARN in this order:
+
+1. **`TF_CLOUDFRONT_ACM_CERTIFICATE_ARN`** — optional override (us-east-1 ACM)
+2. **`TF_ACM_CERTIFICATE_ARN`** — reused when **`AWS_REGION`** is **`us-east-1`** (same ARN as the ALB)
+
+If the ALB stack runs outside **`us-east-1`**, request a separate us-east-1 cert for the same domain and set **`TF_CLOUDFRONT_ACM_CERTIFICATE_ARN`**.
 
 ## Soft destroy / DNS
 
