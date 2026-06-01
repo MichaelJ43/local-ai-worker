@@ -63,6 +63,18 @@ resource "aws_cloudfront_distribution" "site" {
   depends_on = [aws_s3_bucket_public_access_block.site]
 }
 
+resource "aws_route53_record" "apex" {
+  zone_id = var.hosted_zone_id
+  name    = var.domain_name
+  type    = "A"
+
+  alias {
+    name                   = aws_cloudfront_distribution.site.domain_name
+    zone_id                = "Z2FDTNDATAQYW2"
+    evaluate_target_health = false
+  }
+}
+
 resource "aws_s3_bucket_policy" "site" {
   depends_on = [aws_cloudfront_distribution.site]
   bucket     = aws_s3_bucket.site.id

@@ -14,6 +14,11 @@ variable "domain_name" {
   description = "Apex hostname for CloudFront alternate domain"
 }
 
+variable "hosted_zone_id" {
+  type        = string
+  description = "Route53 hosted zone ID for domain_name (delegated zone apex)"
+}
+
 variable "cloudfront_certificate_arn" {
   type        = string
   description = "ACM certificate ARN in us-east-1 for CloudFront viewer"
