@@ -15,7 +15,7 @@ This file is the **primary onboarding document** for coding agents (and humans) 
 | Layer | Stack |
 |--------|--------|
 | Desktop shell | Tauri 2, Rust stable |
-| UI | Vanilla HTML/CSS/JS, Vite 5, `@tauri-apps/api` v2 |
+| UI | Vanilla HTML/CSS/JS, Vite 6, `@tauri-apps/api` v2 |
 | Shared logic | `ai_worker_core` crate (rules, context, audit, Ollama client, hardware, guard exec, worker config) |
 | Worker container | Docker image built from `docker/` (bash agent loop, git/gh guard wrappers) |
 | Persistence (app) | `workers.json`, **`llm_sources.json`** (Ollama + Cursor catalog for escalation tiers), `secret_keys.json`, `pending_restore_prompt.json`, `audit.sqlite3`, per-worker dirs under app data |
@@ -30,7 +30,7 @@ This file is the **primary onboarding document** for coding agents (and humans) 
 crates/
   ai_worker_core/      # Library: rules, context, audit, docker helpers, worker_config, worker-guard binary
   ai_worker_hybrid/     # Bounded Ollama + Cursor SDK bridge types (no Tauri); used by src-tauri
-cursor-agent-bridge/   # Node: @cursor/sdk CLI (cli.mjs); npm ci here before hybrid escalation
+cursor-agent-bridge/   # Node >=22.13: @cursor/sdk CLI (cli.mjs); npm ci here before hybrid escalation
 docker/                # Dockerfile.worker, agent-loop.sh, repo-agent-loop.sh, worker-agent-common.sh, entrypoints, git/gh wraps
 docs-site/             # ASP.NET Core docs + downloads (GHCR local-ai-worker-docs; Terraform infra/terraform/docs-site-*); Razor pages render bundled ../docs/*.md (USER_GUIDE, architecture, REPO_AGENT_SANDBOX) + Getting Started + Home; vendored Mermaid in wwwroot/lib/mermaid
 docs/                  # USER_GUIDE, COMPOSE_WORKERS, architecture, rules/rules-tree.json, schemas/
