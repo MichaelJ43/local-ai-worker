@@ -13,7 +13,7 @@ Desktop app (Tauri + Rust) to manage autonomous AI workers against **Docker-host
 ## Prerequisites
 
 - [Rust](https://rustup.rs/) (stable)
-- [Node.js](https://nodejs.org/) 18+ (for Vite + Tauri CLI via npm)
+- [Node.js](https://nodejs.org/) 22.13+ (Vite/Tauri CLI; required by `@cursor/sdk` in `cursor-agent-bridge/`)
 - [Docker Desktop](https://www.docker.com/products/docker-desktop/) (for Ollama and worker sandboxes)
 
 ## Quick start
